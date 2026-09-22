@@ -12,6 +12,11 @@
 import { prihlasen } from './session.mjs';
 import * as zaznamy from './zaznamy.mjs';
 
+// Na VPS běží vedle sebe víc aplikací za jedním Caddy. Když hostname spadne
+// na sousední aplikaci, vrátí se její 404 a v prohlížeči to vypadá jako naše
+// chyba. Každá odpověď proto říká, kdo ji napsal.
+const APLIKACE = 'famicura-ring';
+
 const CORS = {
   'Access-Control-Allow-Origin': process.env.CORS_ORIGIN || '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -33,7 +38,7 @@ export function createHandler({ dbs }) {
       if (m === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
 
       if (m === 'GET' && path === '/api/health') {
-        return json({ ok: true, cas: new Date().toISOString(),
+        return json({ ok: true, aplikace: APLIKACE, cas: new Date().toISOString(),
           verze: process.env.APP_VERZE || '', commit: process.env.APP_COMMIT || '',
           vetev: process.env.APP_VETEV || '', nasazeno: process.env.APP_NASAZENO || '',
           spusteno: process.env.APP_SPUSTENO || '' });
@@ -56,7 +61,7 @@ export function createHandler({ dbs }) {
         return json({ ok: true });
       }
 
-      return json({ ok: false, error: 'Neznámá adresa.' }, 404);
+      return json({ ok: false, aplikace: APLIKACE, error: 'Neznámá adresa.' }, 404);
     } catch (e) {
       console.error('[famicura-ring]', e);
       return json({ ok: false, error: e.message || 'Chyba serveru' }, e.status || 500);

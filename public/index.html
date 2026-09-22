@@ -846,15 +846,44 @@ const CLB_MAX_QUEUE = 500;
 
 const clbQueue = [];
 let clbFlushing = false;
-let clbState = 'unknown';     // unknown | ok | off | error
+let clbState = 'unknown';     // unknown | ok | error
 
 function clbSend(row) {
   clbQueue.push(row);
   while (clbQueue.length > CLB_MAX_QUEUE) clbQueue.shift();
 }
 
+/*
+ * Netlify posílá /api/clb na VPS. Za jedním Caddy tam stojí víc aplikací, a
+ * když pro náš hostname chybí blok v /etc/caddy/Caddyfile, odpoví soused –
+ * jeho "Neznámá cesta." pak v prohlížeči vypadá jako chyba zápisu do SQL.
+ * Při první neúspěšné dávce se proto zeptáme /api/clb-health, kdo na té
+ * adrese je; odpověď platí, dokud zápis zase nezačne procházet.
+ */
+let clbKdo = null;
+
+async function clbKdoOdpovida() {
+  if (clbKdo) return clbKdo;
+  try {
+    const { res, body } = await api('/api/clb-health');
+    if (body && body.aplikace === 'famicura-ring') {
+      clbKdo = { nas: true, text: '' };
+    } else if (res.ok) {
+      clbKdo = { nas: false, text: 'Na adrese VPS odpovídá aplikace, která se nehlásí jako famicura-ring:'
+        + ' nasaďte znovu ./deploy/vps-deploy.sh, nebo opravte blok famicuraring… v /etc/caddy/Caddyfile.' };
+    } else {
+      const co = body && body.error ? ` – ${body.error}` : '';
+      clbKdo = { nas: false, text: `Na adrese VPS odpovídá jiná aplikace (HTTP ${res.status}${co}):`
+        + ' v /etc/caddy/Caddyfile chybí blok famicuraring… nebo míří na cizí port.' };
+    }
+  } catch {
+    clbKdo = { nas: false, text: 'Server na VPS neodpovídá: zkontrolujte pm2 a Caddy.' };
+  }
+  return clbKdo;
+}
+
 async function clbFlush() {
-  if (clbFlushing || !clbQueue.length || clbState === 'off') return;
+  if (clbFlushing || !clbQueue.length) return;
   clbFlushing = true;
   try {
     while (clbQueue.length) {
@@ -865,20 +894,18 @@ async function clbFlush() {
         body: JSON.stringify(row)
       });
 
-      if (res.ok) { clbQueue.shift(); clbState = 'ok'; continue; }
+      if (res.ok) { clbQueue.shift(); clbState = 'ok'; clbKdo = null; continue; }
 
-      if (res.status === 503) {                 // not configured yet
-        clbState = 'off';
-        showClb('Zápis do CLB1 není nastavený (chybí CLB_WEBHOOK_URL).', true);
-        return;
-      }
       if (res.status === 400) {                 // malformed: retrying cannot help
         clbQueue.shift();
         console.error('clb row rejected', body.error);
         continue;
       }
       clbState = 'error';                       // transient: keep it and try later
-      showClb(`Zápis do CLB1 se nedaří (${body.error || res.status}), zkouším dál.`, true);
+      const kdo = await clbKdoOdpovida();
+      showClb(kdo.nas
+        ? `Zápis do CLB1 se nedaří (${body.error || res.status}), zkouším dál.`
+        : `${kdo.text} Zkouším dál.`, true);
       return;
     }
     if (clbState === 'ok') showClb('');

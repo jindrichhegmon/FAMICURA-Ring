@@ -46,6 +46,13 @@
   to = "https://famicuraring.95-216-201-2.sslip.io/api/clb"
   status = 200
   force = true
+# Stejná adresa bez přihlášení: stránka se jí ptá, kdo na VPS vlastně odpovídá.
+# Bez toho vypadá 404 sousední aplikace jako naše chyba.
+[[redirects]]
+  from = "/api/clb-health"
+  to = "https://famicuraring.95-216-201-2.sslip.io/api/health"
+  status = 200
+  force = true
 [[redirects]]
   from = "/api/schedules"
   to = "/.netlify/functions/schedules"

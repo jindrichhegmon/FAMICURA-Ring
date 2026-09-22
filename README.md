@@ -311,3 +311,43 @@ Firewall CLB1 pouští VPS, ne nutně váš počítač. Tabulky proto zakládejt
 
 Skript čte `sql/clb1.sql`, rozdělí ho na dávky podle `GO` a použije stejné
 `.env` jako server. Lze ho pustit opakovaně.
+
+## v14 - když zápis do CLB1 hlásí cizí chybu
+
+### Co se dělo
+
+Stránka hlásila `Zápis do CLB1 se nedaří (Neznámá cesta.), zkouším dál.`
+Ta věta ale v tomhle projektu nikde není - píše ji **pecedoma-sestra**
+(`src/api.mjs`, odpověď na neznámou cestu). Na `famicuraring…sslip.io` tedy
+neodpověděl náš server, ale soused: v `/etc/caddy/Caddyfile` buď chybí blok
+`famicuraring.95-216-201-2.sslip.io`, nebo míří na cizí port (3099 patří
+pecedoma-sestře, 3101 datecu, náš je **3111**).
+
+### Aby to příště řekla rovnou aplikace
+
+* `/api/health` i odpověď 404 nese `"aplikace": "famicura-ring"`.
+* Netlify přeposílá i `/api/clb-health` → `/api/health` na VPS (bez přihlášení).
+* Při prvním neúspěšném zápisu se stránka zeptá, kdo na té adrese je, a místo
+  cizí hlášky napíše, co opravit - chybějící blok v Caddy, starší nasazení,
+  nebo že server neodpovídá vůbec.
+
+### Kontrola z terminálu
+
+Kdo odpovídá na naší adrese (čekáme `"aplikace":"famicura-ring"`):
+
+    curl -s https://famicuraring.95-216-201-2.sslip.io/api/health
+
+Co je v Caddy a na kterém portu:
+
+    ssh -i ~/.ssh/id_ed25519_jhnapps root@95.216.201.2 \
+      "grep -n -A3 famicuraring /etc/caddy/Caddyfile; ss -ltnp | grep ':3111 '"
+
+Když blok chybí, doplnit ho podle `deploy/Caddyfile.snippet` a:
+
+    ssh -i ~/.ssh/id_ed25519_jhnapps root@95.216.201.2 \
+      "caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy"
+
+Běží vůbec náš proces?
+
+    ssh -i ~/.ssh/id_ed25519_jhnapps root@95.216.201.2 \
+      "su - jhnapps -c 'pm2 list && pm2 logs famicura-ring --lines 30 --nostream'"

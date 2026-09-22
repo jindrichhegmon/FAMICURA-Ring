@@ -27,6 +27,8 @@ test('health nepotřebuje přihlášení a vrací verzi', async () => {
   const b = await r.json();
   assert.equal(b.ok, true);
   assert.ok(b.cas);
+  // Stránka podle toho pozná, že na adrese VPS neodpovídá sousední aplikace.
+  assert.equal(b.aplikace, 'famicura-ring');
 });
 
 test('zápis bez přihlášení je odmítnut', async () => {
@@ -113,9 +115,11 @@ test('diagnostika vrací počty řádků', async () => {
   assert.equal(b.nahravky, 4);
 });
 
-test('neznámá adresa je 404', async () => {
+test('neznámá adresa je 404 a řekne, kdo odpověděl', async () => {
   const { dbs } = mockDbs();
-  assert.equal((await createHandler({ dbs })(req('GET', '/api/neco'))).status, 404);
+  const r = await createHandler({ dbs })(req('GET', '/api/neco'));
+  assert.equal(r.status, 404);
+  assert.equal((await r.json()).aplikace, 'famicura-ring');
 });
 
 test('příprava ořízne délky a řídicí znaky', () => {
