@@ -39,10 +39,13 @@
   from = "/api/events"
   to = "/.netlify/functions/events"
   status = 200
+# Zápis do CLB1 běží na VPS – firewall SQL Serveru pouští jen jeho pevnou IP.
+# Musí být před ostatními /api pravidly.
 [[redirects]]
   from = "/api/clb"
-  to = "/.netlify/functions/clb"
+  to = "https://famicuraring.95-216-201-2.sslip.io/api/clb"
   status = 200
+  force = true
 [[redirects]]
   from = "/api/schedules"
   to = "/.netlify/functions/schedules"

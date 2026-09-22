@@ -253,7 +253,7 @@ Karta kamery, ze které právě běží obraz, je orámovaná zeleně a nese odz
 takto je vidět v seznamu i v dlaždicích. Označení se přesune při přepnutí
 kamery a zmizí s ukončením streamu.
 
-## v13 - CLB1 a složka na Google Disku
+## v13 - CLB1 přes vlastní server na VPS a složka na Google Disku
 
 ### Co kam teče
 
@@ -261,30 +261,43 @@ kamery a zmizí s ukončením streamu.
 - **Metadata nahrávek** včetně názvu souboru a složky → `dbo.FamicuraRingNahravky`
 - **Video** → složka, kterou vyberete; Google Disk ji odsynchronizuje nahoru
 
-DDL obou tabulek je v `sql/clb1.sql`, popis scénáře v `sql/make-scenario.md`.
+DDL obou tabulek je v `sql/clb1.sql`.
 
-### Zápis do CLB1
+### Proč VPS
 
-Stránka posílá řádky na `/api/clb`. Funkce z nich **sama skládá SQL** a teprve
-ten předá webhooku v make.com; prohlížeč webhook URL nikdy nevidí.
+Firewall SQL Serveru pouští jen pevnou IP adresu VPS, z Netlify se na CLB1
+dostat nejde. Stejně to řeší `PECEDOMA-sestra`: frontend zůstává na Netlify
+a `/api/clb` se přesměrovává na vlastní Node server na VPS.
 
-Modul MSSQL v make.com hodnoty neparametrizuje, jen je vkládá do textu dotazu.
-Proto se escapuje tady (`netlify/functions/_clb.mjs`): každá hodnota je
-řetězcový literál se zdvojenými apostrofy, čísla se ověřují, názvy tabulek jsou
-konstanty. Testuje se na kostře příkazu po odstranění literálů - pokus o injekci
-se musí celý scvrknout na jeden literál.
+Jen tenhle jediný endpoint. Všechno ostatní - Ring OAuth, webhook, WHEP proxy
+i plány - zůstává na Netlify, protože SQL nepotřebuje.
 
-Řádky se řadí do fronty a odesílají po jednom. Neúspěch (výpadek sítě) zůstává
-ve frontě a zkouší se znovu, odmítnutý řádek (400) se zahodí. Bez nastavené
-`CLB_WEBHOOK_URL` funkce vrací 503 a stránka to jednou oznámí.
+    prohlížeč → Netlify /api/clb → famicuraring.95-216-201-2.sslip.io → CLB1
 
-Proměnné v Netlify: `CLB_WEBHOOK_URL`, volitelně `CLB_WEBHOOK_SECRET`.
+**Make se nepoužívá.** Server mluví s CLB1 přímo přes `mssql` a všechny hodnoty
+jdou jako parametry `@nazev`, takže se nic neescapuje ani nelepí do textu
+dotazu. Tím odpadlo i skládání SQL, které si předtím vynucoval modul MSSQL
+v make.com.
+
+Přihlášení se ověřuje toutéž cookie jako na Netlify - `RING_HMAC_KEY` musí být
+stejný na obou stranách. Vlastní SQL z prohlížeče poslat nejde, server přijímá
+jen dva tvary řádku.
+
+### Nasazení na VPS
+
+    ./deploy/vps-deploy.sh          # rsync + npm install + pm2 restart
+
+Poprvé na VPS vytvořit `/opt/famicura-ring/.env` podle `.env.example` a přidat
+blok z `deploy/Caddyfile.snippet` do `/etc/caddy/Caddyfile`.
+
+Běží jako `famicura-ring` v PM2 pod uživatelem `jhnapps`, port **3101** za Caddy.
+Stav: `curl -s https://famicuraring.95-216-201-2.sslip.io/api/health`
 
 ### Složka pro videa
 
 Stránka nemůže dostat absolutní cestu - jedinou možností je File System Access
 API, kde složku jednou vyberete v dialogu. Handle se ukládá do IndexedDB, takže
-volba přežije obnovení stránky; nová relace si může vyžádat potvrzení.
+volba přežije obnovení stránky.
 
 **Funguje v Chrome a Edge na počítači. Safari to neumí, na Macu ani na iPhonu** -
 tam karta nahrávek zůstane u stahování a řekne to.
