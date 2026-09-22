@@ -331,6 +331,17 @@ pecedoma-sestře, 3101 datecu, náš je **3111**).
   cizí hlášky napíše, co opravit - chybějící blok v Caddy, starší nasazení,
   nebo že server neodpovídá vůbec.
 
+### Co to bylo doopravdy
+
+Blok v `/etc/caddy/Caddyfile` existoval, ale mířil na `127.0.0.1:3101` -
+port aplikace `/opt/datec…`. Zbytek po prvním zadání, kdy jsme na 3101 měli
+být my; po přesunu na **3111** kvůli kolizi se Caddyfile neopravil. Na 3111
+přitom neposlouchal nikdo, protože server nebyl nasazený.
+
+Pořadí nápravy: opravit port v Caddy a `reload`, pak `.env`, pak
+`./deploy/vps-deploy.sh`, pak `scripts/init-db.mjs`, nakonec přebuildit
+Netlify kvůli pravidlu `/api/clb-health`.
+
 ### Kontrola z terminálu
 
 Kdo odpovídá na naší adrese (čekáme `"aplikace":"famicura-ring"`):
