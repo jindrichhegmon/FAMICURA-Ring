@@ -217,3 +217,31 @@ pro Safari a opravy míří na mechanismy, které ji tam mohou způsobit.
 Tlačítko kamery je v dlaždicích na celou šířku a název je vycentrovaný.
 `grid-auto-rows:1fr` drží všechny dlaždice stejně vysoké, takže dvouřádkový
 název v jednom řádku nerozhází mřížku.
+
+## v11 - plán nahrávání
+
+Až **pět intervalů na kameru**; v jejich průběhu se nahrávání spustí samo.
+
+### Zásadní omezení
+
+Nahrávání vzniká v prohlížeči přes `MediaRecorder` nad canvasem. Netlify
+Functions jsou krátkodobé obsluhy požadavků - nemůžou držet WebRTC spojení
+hodiny a nahrávat. **Plán tedy funguje jen tehdy, když je stránka otevřená
+a přihlášená.** Zavřený telefon nic nenahraje. Je to napsané i přímo
+v editoru plánu.
+
+### Jak to funguje
+
+- Interval je denní rozsah `od`–`do`. Když je `od` větší než `do`, přechází
+  přes půlnoc (22:00-06:00), což noční hlídání potřebuje.
+- Rozvrhy se ukládají serverově do Netlify Blobs (`/api/schedules`, GET a PUT,
+  za session cookie), takže přežijí výměnu zařízení. Validace je na serveru
+  (`netlify/functions/_schedule.mjs`), rozhodování „běží teď?" na klientu
+  (`public/schedule.js`) - obojí bez DOM, obojí testované v Node.
+- Plánovač kontroluje stav každých 15 s. Když se okno otevře a nic neběží,
+  sám spustí stream dané kamery a pak nahrávání. Pokud se právě díváte na
+  jinou kameru, **nepřebírá ji** - jen to oznámí.
+- Nahrávání nezačne, dokud z kamery reálně neteče obraz, aby nevznikl černý
+  soubor.
+- Nahrávky se řadí do seznamu, každá se svým uložením a sdílením. Drží se
+  jen v paměti stránky, takže je po zavření ztratíte - stránka to říká.

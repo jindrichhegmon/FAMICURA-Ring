@@ -93,9 +93,13 @@
   #devices.tiles .dev{display:flex;flex-direction:column;gap:12px;justify-content:space-between;
                       border:1px solid #dde4ea;border-radius:14px;padding:14px}
   #devices.tiles .dev .meta{justify-content:center;text-align:center}
-  #devices.tiles .dev button{width:100%}
-  /* A utility class has to beat both later rules of equal weight (.seg) and
-     id rules (#saveLink), so it carries the flag. */
+  .dev .actions{display:flex;gap:8px;align-items:center}
+  #devices.list .dev .actions{flex:0 0 auto}
+  #devices.tiles .dev .actions{flex-direction:column}
+  #devices.tiles .dev .actions > *{width:100%}
+  .badge.plan{color:#0d4a75;background:#e7f1fb}
+  /* A utility class has to beat later rules of equal weight (.seg) and any id
+     rule, so it carries the flag. */
   .hide{display:none !important}
 
   .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
@@ -119,8 +123,6 @@
   button.icon svg{width:22px;height:22px}
   /* last, so it wins over every colour variant above */
   button:disabled{background:#9db4cc;color:#fff}
-  #saveLink{display:inline-block;background:#106fd5;color:#fff;font-weight:700;
-            border-radius:12px;padding:12px 18px;min-height:44px;text-decoration:none;line-height:20px}
   #log{margin:0;list-style:none;padding:0;max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch}
   #log li{padding:9px 0;border-bottom:1px solid #eef2f6;font-size:.92rem;display:flex;gap:10px}
   #log li:last-child{border-bottom:0}
@@ -130,6 +132,26 @@
   #log .ts small{color:#8494a5;font-weight:400;font-size:.78rem}
   #log .msg{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
   #log .cam{color:#5a6b7d;font-size:.78rem}
+
+  .schedRow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+            padding:10px 0;border-bottom:1px solid #eef2f6}
+  .schedRow:last-child{border-bottom:0}
+  .schedRow input[type=time]{flex:1 1 110px;width:auto}
+  .schedRow .no{color:#5a6b7d;font-size:.85rem;flex:0 0 18px}
+  .schedRow label{display:flex;align-items:center;gap:6px;font-size:.85rem;color:#5a6b7d;
+                  min-height:44px;cursor:pointer}
+  .schedRow input[type=checkbox]{width:22px;height:22px;min-height:22px;margin:0}
+  .schedRow.live{background:#eef7f0;border-radius:10px;padding-left:8px;padding-right:8px}
+
+  #recordings{list-style:none;margin:0;padding:0}
+  #recordings li{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;
+                 justify-content:space-between;padding:12px 0;border-bottom:1px solid #eef2f6}
+  #recordings li:last-child{border-bottom:0}
+  #recordings .what{min-width:0;overflow-wrap:anywhere;flex:1 1 180px}
+  #recordings .what strong{display:block}
+  #recordings a{display:inline-block;background:#106fd5;color:#fff;font-weight:700;
+                border-radius:12px;padding:12px 18px;min-height:44px;line-height:20px;
+                text-decoration:none}
 
   #export{margin-top:14px;border-top:1px solid #eef2f6;padding-top:12px}
   #export summary{font-weight:700;cursor:pointer;padding:10px 0;min-height:44px;line-height:24px}
@@ -171,6 +193,27 @@
       <div id="devices" class="muted list" style="margin-top:12px">Zatím nenačteno.</div>
     </div>
 
+    <div class="c hide" id="scheduleCard">
+      <h2>Plán nahrávání <span id="schedFor" class="muted"></span></h2>
+      <p class="muted" style="margin:0 0 12px">
+        Až pět intervalů na kameru. Nahrávání se v nich spustí samo.
+        <strong>Funguje jen když je tato stránka otevřená.</strong>
+      </p>
+      <div id="schedRows"></div>
+      <div class="row" style="margin-top:12px">
+        <button id="schedSave" class="wide">Uložit plán</button>
+      </div>
+      <p id="schedMsg" class="muted" style="margin:10px 0 0"></p>
+    </div>
+
+    <div class="c hide" id="recCard">
+      <h2>Nahrávky</h2>
+      <p class="muted" style="margin:0 0 12px">
+        Zůstávají jen do zavření stránky – co chcete zachovat, uložte.
+      </p>
+      <ul id="recordings"></ul>
+    </div>
+
     <div class="c hide" id="streamCard">
       <h2>Živý obraz <span id="streamName" class="muted"></span></h2>
 
@@ -200,8 +243,6 @@
       </div>
 
       <div class="row" id="actionBar" style="margin-top:10px">
-        <a id="saveLink" class="hide" download>Uložit video</a>
-        <button id="shareBtn" class="sec hide">Sdílet</button>
         <button id="stop" class="danger" disabled>Ukončit</button>
       </div>
 
@@ -242,8 +283,10 @@
 </div>
 
 <script type="module">
-import { LiveAnalyzer, fmtTime, drawBackground, drawSkeleton, createLogEntry,
+import { LiveAnalyzer, fmtTime, fmtClock, drawBackground, drawSkeleton, createLogEntry,
          boundFrom, filterLog, logToCsv, csvFilename } from '/analyzer.js';
+import { MAX_INTERVALS, isWithin, activeInterval, dueRecording, fmtInterval,
+         collectIntervals } from '/schedule.js';
 
 const $ = (id) => document.getElementById(id);
 const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
@@ -324,6 +367,7 @@ async function refreshStatus() {
   $('loginCard').classList.add('hide');
   $('app').classList.remove('hide');
   renderDiag(body);
+  loadSchedules();
 }
 
 $('loginForm').onsubmit = async (e) => {
@@ -342,6 +386,8 @@ $('loginForm').onsubmit = async (e) => {
 };
 
 /* ---------- devices ---------- */
+
+let knownDevices = [];
 
 const CAMERA_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -386,22 +432,35 @@ $('loadDevices').onclick = async () => {
   }
 
   // Same markup for both views; the layout is the container's class.
+  knownDevices = body.devices;
+
   // The Ring id is machine detail. It is a column in the log export, which is
   // where it is useful; on the card it only produced a huge hover tooltip.
-  $('devices').innerHTML = body.devices.map((d) => `
+  $('devices').innerHTML = body.devices.map((d) => {
+    const planned = (schedules[d.id] || []).length;
+    return `
     <div class="dev">
       <div class="meta">
         <span class="name">${esc(d.name)}</span>
         ${d.online === false ? '<span class="badge">offline</span>' : ''}
+        ${planned ? `<span class="badge plan">${planned}× plán</span>` : ''}
       </div>
-      <button class="go icon" data-id="${esc(d.id)}" data-name="${esc(d.name)}"
-              aria-label="Živý obraz – ${esc(d.name)}" title="Živý obraz">${CAMERA_ICON}</button>
-    </div>`).join('');
+      <div class="actions">
+        <button class="go icon" data-id="${esc(d.id)}" data-name="${esc(d.name)}"
+                aria-label="Živý obraz – ${esc(d.name)}" title="Živý obraz">${CAMERA_ICON}</button>
+        <button class="sched sec" data-id="${esc(d.id)}" data-name="${esc(d.name)}">Plán</button>
+      </div>
+    </div>`; }).join('');
 
   $('views').classList.remove('hide');
-  $('devices').querySelectorAll('.dev button').forEach((b) => {
+  $('devices').querySelectorAll('button.go').forEach((b) => {
     b.onclick = () => startStream(b.dataset.id, b.dataset.name);
   });
+  $('devices').querySelectorAll('button.sched').forEach((b) => {
+    b.onclick = () => openSchedule({ id: b.dataset.id, name: b.dataset.name });
+  });
+
+  schedulerTick().catch(() => {});
 };
 
 /* ---------- WHEP live stream ---------- */
@@ -516,7 +575,9 @@ async function startStream(deviceId, name, isReconnect) {
     pc.addEventListener('track', (e) => {
       if (pc !== thisPc) return;          // a stale connection must not hijack the player
       const v = $('video');
-      v.srcObject = e.streams[0];
+      // An SDP answer without msid gives no stream on the event, so build one
+      // from the track rather than assigning undefined and showing nothing.
+      v.srcObject = e.streams[0] || new MediaStream([e.track]);
       // iOS Safari will not start playback on its own in every case; muted
       // playback is always allowed, so offer sound as a separate tap.
       v.play().then(() => {
@@ -725,7 +786,58 @@ function renderLoop() {
 
 /* ---------- recording ---------- */
 
-let recorder = null, recording = false, chunks = [], recordedURL = null, recStartedAt = 0, timerId = null;
+let recorder = null, recording = false, chunks = [], recStartedAt = 0, timerId = null;
+
+/*
+ * Unattended runs produce several files, so each one gets its own row instead
+ * of overwriting a single save link. The blobs live in this page only.
+ */
+const recordings = [];
+
+function addRecording(blob, device, from, to) {
+  const url = URL.createObjectURL(blob);
+  const stamp = from.toISOString().replace(/[:.]/g, '-');
+  const safe = (device?.name || 'kamera').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
+  const rec = { url, blob, device, from, to,
+                name: `famicura-${safe}-${stamp}.${recordExt}` };
+  recordings.unshift(rec);
+
+  const li = document.createElement('li');
+  const what = document.createElement('div');
+  what.className = 'what';
+  const title = document.createElement('strong');
+  title.textContent = device?.name || 'Kamera';
+  const when = document.createElement('span');
+  when.className = 'muted';
+  when.textContent = `${fmtClock(from)}–${fmtClock(to)} · ${(blob.size / 1024 / 1024).toFixed(1)} MB`;
+  what.append(title, when);
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = rec.name;
+  a.textContent = 'Uložit';
+
+  const share = document.createElement('button');
+  share.className = 'sec';
+  share.textContent = 'Sdílet';
+  share.onclick = () => shareRecording(rec);
+
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  actions.append(a, share);
+  li.append(what, actions);
+
+  $('recordings').prepend(li);
+  $('recCard').classList.remove('hide');
+}
+
+async function shareRecording(rec) {
+  const file = new File([rec.blob], rec.name, { type: rec.blob.type });
+  try {
+    if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Famicura Ring' });
+    else $('recordings').querySelector('a')?.click();
+  } catch (e) { /* the user dismissed the sheet */ }
+}
 
 function pickMime() {
   const choices = [
@@ -745,10 +857,7 @@ function startRecording() {
     $('streamMsg').innerHTML = '<span class="bad">Tento prohlížeč neumí nahrávat canvas.</span>';
     return;
   }
-  if (recordedURL) { URL.revokeObjectURL(recordedURL); recordedURL = null; }
   chunks = [];
-  $('saveLink').classList.add('hide');
-  $('shareBtn').classList.add('hide');
 
   // captureStream only produces frames from a canvas that is visible and being
   // drawn, so switch the pipeline on before grabbing the stream.
@@ -758,21 +867,31 @@ function startRecording() {
 
   const fmt = pickMime();
   recordExt = fmt.ext;
-  const stream = canvas.captureStream(30);
-  recorder = fmt.mime
-    ? new MediaRecorder(stream, { mimeType: fmt.mime, videoBitsPerSecond: 3500000 })
-    : new MediaRecorder(stream);
+
+  // If anything here throws, `recording` must not stay true: the button would
+  // read as recording for ever and the scheduler would never start again.
+  let stream;
+  try {
+    stream = canvas.captureStream(30);
+    recorder = fmt.mime
+      ? new MediaRecorder(stream, { mimeType: fmt.mime, videoBitsPerSecond: 3500000 })
+      : new MediaRecorder(stream);
+  } catch (e) {
+    recorder = null;
+    recording = false;
+    autoWindow = null;
+    updateRender();
+    setMsg(`Nahrávání se nepodařilo spustit: ${e.message}`, true);
+    return;
+  }
 
   recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+  const startedAt = new Date();
+  const forDevice = currentDevice;
+
   recorder.onstop = () => {
     const blob = new Blob(chunks, { type: recorder.mimeType || fmt.mime || 'video/mp4' });
-    recordedURL = URL.createObjectURL(blob);
-    recordedBlob = blob;
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    $('saveLink').href = recordedURL;
-    $('saveLink').download = `famicura-ring-${stamp}.${recordExt}`;
-    $('saveLink').classList.remove('hide');
-    $('shareBtn').classList.remove('hide');
+    addRecording(blob, forDevice, startedAt, new Date());
     $('streamMsg').textContent = `Nahrávka hotova (${(blob.size / 1024 / 1024).toFixed(1)} MB).`;
     recorder = null;
     recording = false;
@@ -780,7 +899,16 @@ function startRecording() {
   };
 
   recStartedAt = Date.now();
-  recorder.start(1000);
+  try {
+    recorder.start(1000);
+  } catch (e) {
+    recorder = null;
+    recording = false;
+    autoWindow = null;
+    updateRender();
+    setMsg(`Nahrávání se nepodařilo spustit: ${e.message}`, true);
+    return;
+  }
   tickTimer();
   timerId = setInterval(tickTimer, 250);
 
@@ -794,25 +922,15 @@ function tickTimer() {
 }
 
 function stopRecording() {
+  autoWindow = null;
   if (recorder && recorder.state !== 'inactive') recorder.stop();
-  else { recording = false; updateRender(); }
+  else { recorder = null; recording = false; updateRender(); }
   clearInterval(timerId);
   $('record').textContent = '● Nahrávat';
   $('recBar').classList.add('hide');
 }
 
 $('record').onclick = () => (recording ? stopRecording() : startRecording());
-
-let recordedBlob = null;
-
-$('shareBtn').onclick = async () => {
-  if (!recordedBlob) return;
-  const file = new File([recordedBlob], $('saveLink').download, { type: recordedBlob.type });
-  try {
-    if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Famicura Ring' });
-    else $('saveLink').click();
-  } catch (e) { if (e.name !== 'AbortError') $('saveLink').click(); }
-};
 
 /* ---------- live analysis ---------- */
 
@@ -922,6 +1040,134 @@ function stopAnalysis() {
 }
 
 $('analyze').onclick = () => (analyzing ? stopAnalysis() : startAnalysis());
+
+/* ---------- recording schedules ---------- */
+
+/*
+ * Recording happens in this page, through MediaRecorder on the canvas. There
+ * is no server-side recorder, so a schedule can only fire while the page is
+ * open. The scheduler starts the stream for a due camera when nothing else is
+ * playing, records for the window, and stops at its end.
+ */
+const SCHED_TICK_MS = 15000;
+
+let schedules = {};
+let schedFor = null;          // the camera whose schedule is being edited
+let autoWindow = null;        // the interval the scheduler is currently recording
+
+function schedRowValues() {
+  return [...$('schedRows').querySelectorAll('.schedRow')].map((row) => ({
+    from: row.querySelector('.from').value,
+    to: row.querySelector('.to').value,
+    enabled: row.querySelector('.on').checked
+  }));
+}
+
+function renderSchedRows(intervals) {
+  $('schedRows').innerHTML = '';
+  for (let i = 0; i < MAX_INTERVALS; i++) {
+    const v = intervals[i] || { from: '', to: '', enabled: true };
+    const row = document.createElement('div');
+    row.className = 'schedRow';
+    row.innerHTML = `
+      <span class="no">${i + 1}.</span>
+      <input class="from" type="time" value="${esc(v.from)}" aria-label="Začátek intervalu ${i + 1}">
+      <input class="to" type="time" value="${esc(v.to)}" aria-label="Konec intervalu ${i + 1}">
+      <label><input class="on" type="checkbox" ${v.enabled === false ? '' : 'checked'}> zapnuto</label>`;
+    $('schedRows').append(row);
+  }
+  markLiveRows();
+}
+
+function markLiveRows() {
+  const rows = [...$('schedRows').querySelectorAll('.schedRow')];
+  const values = schedRowValues();
+  rows.forEach((row, i) => row.classList.toggle('live', isWithin(values[i], new Date())));
+}
+
+function openSchedule(device) {
+  schedFor = device;
+  $('schedFor').textContent = '– ' + device.name;
+  $('scheduleCard').classList.remove('hide');
+  renderSchedRows(schedules[device.id] || []);
+  $('schedMsg').textContent = '';
+}
+
+$('schedSave').onclick = async () => {
+  if (!schedFor) return;
+  $('schedSave').disabled = true;
+  $('schedMsg').textContent = 'Ukládám…';
+
+  const intervals = collectIntervals(schedRowValues());
+  const { res, body } = await api('/api/schedules', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId: schedFor.id, intervals })
+  });
+
+  $('schedSave').disabled = false;
+  if (!res.ok) { $('schedMsg').innerHTML = `<span class="bad">${esc(body.error || 'Chyba')}</span>`; return; }
+
+  schedules[schedFor.id] = body.intervals;
+  if (!body.intervals.length) delete schedules[schedFor.id];
+  renderSchedRows(body.intervals);
+  $('schedMsg').textContent = body.intervals.length
+    ? `Uloženo: ${body.intervals.map(fmtInterval).join(', ')}.`
+    : 'Plán pro tuto kameru je prázdný.';
+};
+
+async function loadSchedules() {
+  const { res, body } = await api('/api/schedules');
+  if (res.ok) schedules = body.schedules || {};
+}
+
+// Deciding to start is separate from acting on it, so the rule stays readable.
+async function schedulerTick() {
+  markLiveRows();
+
+  const due = dueRecording(schedules, new Date());
+
+  if (recording && autoWindow) {
+    const stillOpen = due && currentDevice && due.deviceId === currentDevice.id
+                      && isWithin(autoWindow, new Date());
+    if (!stillOpen) {
+      autoWindow = null;
+      stopRecording();
+      setMsg('Plánované nahrávání skončilo.');
+    }
+    return;
+  }
+
+  if (!due || recording) return;
+
+  // Nothing is streaming: bring up the camera the schedule asks for.
+  if (!currentDevice || !pc) {
+    const device = knownDevices.find((d) => d.id === due.deviceId);
+    if (!device) return;
+    autoWindow = due.interval;
+    setMsg(`Plán ${fmtInterval(due.interval)} – spouštím ${device.name}.`);
+    await startStream(device.id, device.name, false);
+    return;
+  }
+
+  // Someone is watching another camera; never hijack that.
+  if (currentDevice.id !== due.deviceId) {
+    setMsg(`Plán čeká na kameru ${esc(knownDevices.find(d => d.id === due.deviceId)?.name || '')}.`);
+    return;
+  }
+
+  const v = $('video');
+  if (!v.srcObject || v.readyState < 2) {
+    setMsg(`Plán ${fmtInterval(due.interval)} – čekám na obraz z kamery.`);
+    return;
+  }
+
+  autoWindow = due.interval;
+  startRecording();
+  setMsg(`Plánované nahrávání ${fmtInterval(due.interval)} běží.`);
+}
+
+setInterval(() => { schedulerTick().catch(() => {}); }, SCHED_TICK_MS);
 
 /* ---------- events ---------- */
 
