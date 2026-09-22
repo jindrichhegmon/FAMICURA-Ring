@@ -2,32 +2,87 @@
 <html lang="cs">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#106fd5">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Famicura Ring">
+<meta name="format-detection" content="telephone=no">
 <title>Famicura Ring</title>
 <style>
-  :root{color-scheme:light}
+  :root{
+    color-scheme:light;
+    --gap:14px;
+    --safe-l:env(safe-area-inset-left,0px);
+    --safe-r:env(safe-area-inset-right,0px);
+    --safe-b:env(safe-area-inset-bottom,0px);
+  }
   *{box-sizing:border-box}
-  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f7f9;margin:0;color:#17212b}
-  .w{max-width:920px;margin:auto;padding:28px 18px 60px}
-  h1{margin:0 0 4px}
+  html{-webkit-text-size-adjust:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    background:#f5f7f9;margin:0;color:#17212b;
+    -webkit-tap-highlight-color:transparent;
+  }
+  .w{
+    max-width:920px;margin:auto;
+    padding:24px calc(16px + var(--safe-r)) calc(48px + var(--safe-b)) calc(16px + var(--safe-l));
+  }
+  h1{margin:0 0 4px;font-size:1.5rem}
   h2{margin:0 0 12px;font-size:1.05rem}
-  .c{background:#fff;border:1px solid #dde4ea;border-radius:16px;padding:20px;margin:14px 0}
-  button{border:0;border-radius:10px;padding:11px 15px;background:#106fd5;color:#fff;font-weight:700;cursor:pointer}
-  button:disabled{background:#9db4cc;cursor:not-allowed}
+  .c{background:#fff;border:1px solid #dde4ea;border-radius:16px;padding:18px;margin:var(--gap) 0}
+
+  button{
+    border:0;border-radius:12px;padding:12px 18px;min-height:44px;
+    background:#106fd5;color:#fff;font-weight:700;font-size:1rem;
+    cursor:pointer;touch-action:manipulation;
+  }
+  button:disabled{background:#9db4cc}
   button.sec{background:#e6ecf2;color:#17212b}
-  input{width:100%;padding:12px;border:1px solid #bcc8d1;border-radius:9px;font-size:16px}
-  pre{background:#0d1621;color:#e6edf3;padding:12px;border-radius:10px;overflow:auto;max-height:340px;font-size:12px;margin:0}
-  video{width:100%;background:#000;border-radius:12px;aspect-ratio:16/9}
+  button.wide{width:100%}
+
+  input{
+    width:100%;padding:13px;border:1px solid #bcc8d1;border-radius:12px;
+    font-size:16px; /* under 16px iOS zooms the page on focus */
+    min-height:44px;
+  }
+
+  pre{
+    background:#0d1621;color:#e6edf3;padding:12px;border-radius:12px;
+    margin:0;font-size:11px;line-height:1.45;
+    white-space:pre-wrap;word-break:break-all;
+    max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch;
+  }
+  code{word-break:break-all;font-size:.85em}
+
+  video{width:100%;background:#000;border-radius:12px;aspect-ratio:16/9;display:block}
+
   .ok{color:#16723b;font-weight:700}
   .bad{color:#9a5710;font-weight:700}
-  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-  .dev{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eef2f6}
-  .dev:last-child{border-bottom:0}
   .muted{color:#5a6b7d;font-size:.9rem}
+
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .row > input{flex:1 1 200px;width:auto}
+
+  /* key/value rows stack by themselves once the screen is narrow */
+  .kv{display:flex;flex-wrap:wrap;gap:2px 12px;justify-content:space-between;
+      padding:8px 0;border-bottom:1px solid #eef2f6;font-size:.92rem}
+  .kv:last-child{border-bottom:0}
+  .kv > span:first-child{color:#5a6b7d}
+  .kv > span:last-child{text-align:right;min-width:0;overflow-wrap:anywhere}
+
+  .dev{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;
+       padding:12px 0;border-bottom:1px solid #eef2f6}
+  .dev:last-child{border-bottom:0}
+  .dev .meta{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
   .hide{display:none}
-  table{width:100%;border-collapse:collapse;font-size:.9rem}
-  td{padding:5px 0;border-bottom:1px solid #eef2f6}
-  td:last-child{text-align:right}
+
+  @media (max-width:640px){
+    .kv > span:last-child{text-align:left;flex-basis:100%}
+    .dev button{width:100%}
+    .c{padding:16px}
+  }
 </style>
 </head>
 <body>
@@ -38,36 +93,38 @@
   <div class="c" id="loginCard">
     <h2>Přihlášení</h2>
     <form id="loginForm" class="row">
-      <input id="pw" type="password" placeholder="Heslo Famicura" required style="flex:1;min-width:200px">
-      <button>Přihlásit</button>
+      <input id="pw" type="password" name="password" autocomplete="current-password"
+             placeholder="Heslo Famicura" required>
+      <button class="wide">Přihlásit</button>
     </form>
     <p id="loginMsg" class="muted"></p>
   </div>
 
   <div id="app" class="hide">
     <div class="c">
-      <h2>Diagnostika</h2>
-      <table id="diag"></table>
-    </div>
-
-    <div class="c">
       <h2>Kamery</h2>
-      <div class="row"><button id="loadDevices">Načíst zařízení</button></div>
+      <button id="loadDevices" class="wide">Načíst zařízení</button>
       <div id="devices" class="muted" style="margin-top:12px">Zatím nenačteno.</div>
     </div>
 
-    <div class="c">
+    <div class="c hide" id="streamCard">
       <h2>Živý obraz <span id="streamName" class="muted"></span></h2>
-      <video id="video" autoplay playsinline muted></video>
+      <video id="video" playsinline muted autoplay controls></video>
       <div class="row" style="margin-top:12px">
-        <button id="stop" class="sec" disabled>Ukončit stream</button>
-        <span id="streamMsg" class="muted"></span>
+        <button id="sound" class="sec hide">Zapnout zvuk</button>
+        <button id="stop" class="sec" disabled>Ukončit</button>
       </div>
+      <p id="streamMsg" class="muted" style="margin:10px 0 0"></p>
     </div>
 
     <div class="c">
-      <h2>Události a diagnostický log</h2>
-      <div class="row"><button id="loadEvents" class="sec">Načíst log</button></div>
+      <h2>Diagnostika</h2>
+      <div id="diag"></div>
+    </div>
+
+    <div class="c">
+      <h2>Události a log</h2>
+      <button id="loadEvents" class="sec wide">Načíst log</button>
       <pre id="events" style="margin-top:12px">Zatím nenačteno.</pre>
     </div>
   </div>
@@ -93,6 +150,16 @@ async function api(path, options) {
   return { res, body };
 }
 
+// Ring ids are ~100 chars of base32; the tail is what tells them apart.
+function shortId(id) {
+  const v = String(id ?? '');
+  return v.length > 26 ? v.slice(0, 18) + '…' + v.slice(-6) : v;
+}
+
+function kv(rows) {
+  return rows.map(([k, v]) => `<div class="kv"><span>${k}</span><span>${v}</span></div>`).join('');
+}
+
 /* ---------- status ---------- */
 
 function renderDiag(s) {
@@ -100,31 +167,31 @@ function renderDiag(s) {
   const yn = (v) => v ? '<span class="ok">ano</span>' : '<span class="bad">ne</span>';
 
   rows.push(['Ring účet propojen', yn(s.linked)]);
-  if (s.account_id) rows.push(['Account ID', `<code>${esc(s.account_id)}</code>`]);
+  if (s.account_id) rows.push(['Account ID', `<code title="${esc(s.account_id)}">${esc(shortId(s.account_id))}</code>`]);
   if (s.account_id_source) rows.push(['Zdroj account_id', `<code>${esc(s.account_id_source)}</code>`]);
   if (s.linked_at) rows.push(['Propojeno', new Date(s.linked_at).toLocaleString('cs-CZ')]);
   if (s.token_expires_at) rows.push(['Token platný do', new Date(s.token_expires_at).toLocaleString('cs-CZ')]);
   rows.push(['Nevyzvednuté tokeny', String(s.unclaimed_tokens ?? '–')]);
+
   for (const t of s.tokens || []) {
     rows.push([
       `Token <span class="muted">${esc(t.status)}</span>`,
-      `<code>${esc(String(t.account_id).slice(0, 34))}…</code><br>`
+      `<code title="${esc(t.account_id)}">${esc(shortId(t.account_id))}</code><br>`
       + `<span class="muted">${esc(t.account_id_source || '?')} · ${t.candidates} kandidát(ů)`
       + `${t.expired ? ' · <span class="bad">vypršel</span>' : ''}</span>`
     ]);
   }
-  rows.push(['Netlify Blobs', s.blobs === 'reachable' ? '<span class="ok">dostupné</span>' : '<span class="bad">nedostupné</span>']);
+
+  rows.push(['Netlify Blobs', s.blobs === 'reachable'
+    ? '<span class="ok">dostupné</span>' : '<span class="bad">nedostupné</span>']);
 
   const missing = s.missing || [];
-  rows.push([
-    'Konfigurace',
-    missing.length
-      ? `<span class="bad">chybí: ${esc(missing.join(', '))}</span>`
-      : '<span class="ok">kompletní</span>'
-  ]);
+  rows.push(['Konfigurace', missing.length
+    ? `<span class="bad">chybí: ${esc(missing.join(', '))}</span>`
+    : '<span class="ok">kompletní</span>']);
   if (s.error) rows.push(['Chyba', `<span class="bad">${esc(s.error)}</span>`]);
 
-  $('diag').innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+  $('diag').innerHTML = kv(rows);
 }
 
 async function refreshStatus() {
@@ -156,6 +223,7 @@ $('loginForm').onsubmit = async (e) => {
   if (!res.ok) { $('loginMsg').innerHTML = `<span class="bad">${esc(body.error || 'Chyba')}</span>`; return; }
   $('loginMsg').textContent = '';
   $('pw').value = '';
+  $('pw').blur();
   refreshStatus();
 };
 
@@ -176,9 +244,9 @@ $('loadDevices').onclick = async () => {
 
   $('devices').innerHTML = body.devices.map((d) => `
     <div class="dev">
-      <div>
+      <div class="meta">
         <strong>${esc(d.name)}</strong><br>
-        <span class="muted">${esc(d.id)}${d.kind ? ' · ' + esc(d.kind) : ''}${d.online === false ? ' · offline' : ''}</span>
+        <span class="muted">${d.kind ? esc(d.kind) + ' · ' : ''}${d.online === false ? 'offline · ' : ''}<code title="${esc(d.id)}">${esc(shortId(d.id))}</code></span>
       </div>
       <button data-id="${esc(d.id)}" data-name="${esc(d.name)}">Živý obraz</button>
     </div>`).join('');
@@ -206,13 +274,29 @@ async function startStream(deviceId, name) {
   await stopStream();
   $('streamName').textContent = '– ' + name;
   $('streamMsg').textContent = 'Navazuji spojení…';
+  $('streamCard').classList.remove('hide');
+  $('streamCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   try {
     pc = new RTCPeerConnection({ iceServers: ICE });
 
-    pc.addEventListener('track', (e) => { $('video').srcObject = e.streams[0]; });
+    pc.addEventListener('track', (e) => {
+      const v = $('video');
+      v.srcObject = e.streams[0];
+      // iOS Safari will not start playback on its own in every case; muted
+      // playback is always allowed, so offer sound as a separate tap.
+      v.play().then(() => {
+        $('streamMsg').textContent = 'Přehrávám.';
+        $('sound').classList.remove('hide');
+      }).catch(() => {
+        $('streamMsg').textContent = 'Klepněte na obraz pro spuštění.';
+      });
+    });
+
     pc.addEventListener('connectionstatechange', () => {
-      $('streamMsg').textContent = 'Stav spojení: ' + pc.connectionState;
+      if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')) {
+        $('streamMsg').innerHTML = '<span class="bad">Spojení přerušeno.</span>';
+      }
     });
 
     pc.addTransceiver('audio', { direction: 'sendrecv' });
@@ -251,11 +335,24 @@ async function stopStream() {
     sessionUrl = null;
   }
   if (pc) { pc.close(); pc = null; }
-  $('video').srcObject = null;
+  const v = $('video');
+  v.srcObject = null;
+  v.muted = true;
+  $('sound').textContent = 'Zapnout zvuk';
+  $('sound').classList.add('hide');
   $('stop').disabled = true;
 }
 
+$('sound').onclick = () => {
+  const v = $('video');
+  v.muted = !v.muted;
+  if (!v.muted) v.play().catch(() => {});
+  $('sound').textContent = v.muted ? 'Zapnout zvuk' : 'Ztlumit';
+};
+
 $('stop').onclick = async () => { await stopStream(); $('streamMsg').textContent = 'Stream ukončen.'; };
+
+// iOS fires pagehide, not unload, when Safari suspends the tab.
 window.addEventListener('pagehide', () => { stopStream(); });
 
 /* ---------- events ---------- */
