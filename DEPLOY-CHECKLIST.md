@@ -15,3 +15,12 @@
 9. Na homepage klikněte Načíst zařízení.
 
 Důležité: Client Secret a HMAC key nikdy nedávejte do GitHubu ani HTML.
+
+## v4 - po nasazení
+
+10. Otevřete homepage a přihlaste se heslem `FAMICURA_LINK_PASSWORD`.
+11. Sekce **Diagnostika** musí hlásit `Konfigurace: kompletní` a `Netlify Blobs: dostupné`.
+    Pokud ne, doplňte chybějící proměnné (včetně `NETLIFY_SITE_ID` a `NETLIFY_AUTH_TOKEN`).
+12. Klikněte **Načíst zařízení** a u kamery **Živý obraz**.
+13. Když něco selže, klikněte **Načíst log** - `/api/events` ukáže poslední
+    diagnostické záznamy (`exchange-*`, `link-*`, `whep-*`, `webhook-rejected`).

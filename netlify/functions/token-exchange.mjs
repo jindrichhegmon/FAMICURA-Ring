@@ -1,30 +1,24 @@
 import {
   exchangeAuthorizationCode,
   getRingMe,
-  putTokenRecord
+  putTokenRecord,
+  putDiag,
+  json
 } from "./_ring.mjs";
 
 export default async (req) => {
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({
-      ok:false,
-      error:"POST required"
-    }), {
-      status:405,
-      headers:{ "content-type":"application/json" }
-    });
-  }
+  if (req.method !== "POST") return json({ ok:false, error:"POST required" }, 405);
 
   try {
     const raw = await req.text();
-    const ct = req.headers.get("content-type") || "";
+    const contentType = req.headers.get("content-type") || "";
 
     let data = {};
     try {
-      data = ct.includes("json")
+      data = contentType.includes("json")
         ? JSON.parse(raw || "{}")
         : Object.fromEntries(new URLSearchParams(raw));
-    } catch {}
+    } catch { /* fall through to the query string */ }
 
     const url = new URL(req.url);
     const code =
@@ -34,22 +28,26 @@ export default async (req) => {
       url.searchParams.get("code");
 
     if (!code) {
-      return new Response(JSON.stringify({
-        ok:false,
-        error:"Missing authorization code"
-      }), {
-        status:400,
-        headers:{ "content-type":"application/json" }
-      });
+      await putDiag("exchange-no-code", { content_type: contentType, keys: Object.keys(data) });
+      return json({ ok:false, error:"Missing authorization code" }, 400);
     }
 
     const tokens = await exchangeAuthorizationCode(code);
-    const { accountId } = await getRingMe(tokens.access_token);
+    const { accountId, source, candidates } = await getRingMe(tokens.access_token);
+
+    // Which field the account_id came from decides whether nonce matching can
+    // ever succeed, so record it.
+    await putDiag("exchange-ok", {
+      account_id: accountId,
+      account_id_source: source,
+      candidates_present: Object.keys(candidates).filter((k) => candidates[k])
+    });
 
     const now = Date.now();
 
     await putTokenRecord({
       account_id: accountId,
+      account_id_source: source,
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
       token_type: tokens.token_type || "Bearer",
@@ -61,22 +59,10 @@ export default async (req) => {
       updated_at: new Date(now).toISOString()
     });
 
-    return new Response(JSON.stringify({ ok:true }), {
-      status:200,
-      headers:{
-        "content-type":"application/json",
-        "cache-control":"no-store"
-      }
-    });
-
+    return json({ ok:true });
   } catch (e) {
     console.error("token-exchange", e, e?.details || "");
-    return new Response(JSON.stringify({
-      ok:false,
-      error:e.message
-    }), {
-      status:500,
-      headers:{ "content-type":"application/json" }
-    });
+    await putDiag("exchange-failed", { error: e.message, details: e?.details || null });
+    return json({ ok:false, error:e.message }, 500);
   }
 };

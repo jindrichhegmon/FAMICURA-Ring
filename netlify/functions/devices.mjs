@@ -1,68 +1,46 @@
-import { ensureFreshLinkedRecord, ringFetch } from "./_ring.mjs";
+import {
+  ensureFreshLinkedRecord,
+  hasSession,
+  json,
+  putDiag,
+  ringFetch,
+  unauthorized
+} from "./_ring.mjs";
 
 export default async (req) => {
-  if (req.method !== "GET") {
-    return new Response(JSON.stringify({ ok:false, error:"GET required" }), {
-      status:405,
-      headers:{ "content-type":"application/json" }
-    });
-  }
+  if (req.method !== "GET") return json({ ok:false, error:"GET required" }, 405);
+  if (!hasSession(req)) return unauthorized();
 
   try {
-    const rec = await ensureFreshLinkedRecord();
+    const record = await ensureFreshLinkedRecord();
 
-    if (!rec) {
-      return new Response(JSON.stringify({
-        ok:false,
-        linked:false,
-        error:"Ring účet zatím není propojen."
-      }), {
-        status:404,
-        headers:{
-          "content-type":"application/json",
-          "cache-control":"no-store"
-        }
-      });
+    if (!record) {
+      return json({ ok:false, linked:false, error:"Ring účet zatím není propojen." }, 404);
     }
 
-    const res = await ringFetch("/v1/devices", rec.access_token);
+    const res = await ringFetch("/v1/devices", record.access_token);
     const text = await res.text();
 
     let payload;
-    try { payload = JSON.parse(text); }
-    catch { payload = { raw:text }; }
+    try { payload = JSON.parse(text); } catch { payload = { raw:text }; }
 
     if (!res.ok) {
       console.error("devices", res.status, payload);
-      return new Response(JSON.stringify({
-        ok:false,
-        error:`Ring devices API: ${res.status}`
-      }), {
-        status:res.status,
-        headers:{ "content-type":"application/json" }
-      });
+      await putDiag("devices-failed", { status: res.status, body: text.slice(0, 2000) });
+      return json({ ok:false, error:`Ring devices API: ${res.status}`, detail: payload }, res.status);
     }
 
-    return new Response(JSON.stringify({
-      ok:true,
-      linked:true,
-      data:payload
-    }), {
-      status:200,
-      headers:{
-        "content-type":"application/json",
-        "cache-control":"no-store"
-      }
-    });
+    // JSON:API -> flat list the UI can render and stream from.
+    const devices = (payload?.data || []).map((device) => ({
+      id: device.id,
+      name: device.attributes?.name || device.attributes?.description || "Ring zařízení",
+      kind: device.attributes?.kind || device.type || null,
+      online: device.attributes?.online ?? null
+    }));
 
+    return json({ ok:true, linked:true, devices, raw: payload });
   } catch (e) {
     console.error("devices", e);
-    return new Response(JSON.stringify({
-      ok:false,
-      error:e.message
-    }), {
-      status:500,
-      headers:{ "content-type":"application/json" }
-    });
+    return json({ ok:false, error:e.message }, 500);
   }
 };

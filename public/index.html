@@ -1,1 +1,267 @@
-<!doctype html><html lang="cs"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Famicura Ring</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f5f7f9;margin:0;color:#17212b}.w{max-width:850px;margin:auto;padding:28px 18px}.c{background:#fff;border:1px solid #dde4ea;border-radius:16px;padding:20px;margin:14px 0}button{border:0;border-radius:10px;padding:11px 15px;background:#106fd5;color:white;font-weight:700}pre{background:#0d1621;color:#e6edf3;padding:12px;border-radius:10px;overflow:auto}.ok{color:#16723b}.bad{color:#9a5710}</style></head><body><div class="w"><h1>Famicura Ring</h1><div class="c"><h2>Stav propojení</h2><div id="st">Zjišťuji…</div></div><div class="c"><h2>Ring zařízení</h2><button id="b">Načíst zařízení</button><pre id="o">Zatím nenačteno.</pre></div><div class="c"><h2>Další krok</h2><p>Po úspěšném propojení doplníme výběr kamery, WHEP/WebRTC live stream a váš Fall Analyzer.</p></div></div><script>async function s(){const j=await(await fetch('/api/status')).json(),e=document.getElementById('st');e.textContent=j.linked?'Ring účet propojen':'Ring účet zatím není propojen';e.className=j.linked?'ok':'bad'}document.getElementById('b').onclick=async()=>{const o=document.getElementById('o');o.textContent='Načítám…';try{o.textContent=JSON.stringify(await(await fetch('/api/devices')).json(),null,2)}catch(e){o.textContent=String(e)}};s()</script></body></html>
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Famicura Ring</title>
+<style>
+  :root{color-scheme:light}
+  *{box-sizing:border-box}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#f5f7f9;margin:0;color:#17212b}
+  .w{max-width:920px;margin:auto;padding:28px 18px 60px}
+  h1{margin:0 0 4px}
+  h2{margin:0 0 12px;font-size:1.05rem}
+  .c{background:#fff;border:1px solid #dde4ea;border-radius:16px;padding:20px;margin:14px 0}
+  button{border:0;border-radius:10px;padding:11px 15px;background:#106fd5;color:#fff;font-weight:700;cursor:pointer}
+  button:disabled{background:#9db4cc;cursor:not-allowed}
+  button.sec{background:#e6ecf2;color:#17212b}
+  input{width:100%;padding:12px;border:1px solid #bcc8d1;border-radius:9px;font-size:16px}
+  pre{background:#0d1621;color:#e6edf3;padding:12px;border-radius:10px;overflow:auto;max-height:340px;font-size:12px;margin:0}
+  video{width:100%;background:#000;border-radius:12px;aspect-ratio:16/9}
+  .ok{color:#16723b;font-weight:700}
+  .bad{color:#9a5710;font-weight:700}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .dev{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eef2f6}
+  .dev:last-child{border-bottom:0}
+  .muted{color:#5a6b7d;font-size:.9rem}
+  .hide{display:none}
+  table{width:100%;border-collapse:collapse;font-size:.9rem}
+  td{padding:5px 0;border-bottom:1px solid #eef2f6}
+  td:last-child{text-align:right}
+</style>
+</head>
+<body>
+<div class="w">
+  <h1>Famicura Ring</h1>
+  <p class="muted">Testovací integrace Ring &rarr; Famicura</p>
+
+  <div class="c" id="loginCard">
+    <h2>Přihlášení</h2>
+    <form id="loginForm" class="row">
+      <input id="pw" type="password" placeholder="Heslo Famicura" required style="flex:1;min-width:200px">
+      <button>Přihlásit</button>
+    </form>
+    <p id="loginMsg" class="muted"></p>
+  </div>
+
+  <div id="app" class="hide">
+    <div class="c">
+      <h2>Diagnostika</h2>
+      <table id="diag"></table>
+    </div>
+
+    <div class="c">
+      <h2>Kamery</h2>
+      <div class="row"><button id="loadDevices">Načíst zařízení</button></div>
+      <div id="devices" class="muted" style="margin-top:12px">Zatím nenačteno.</div>
+    </div>
+
+    <div class="c">
+      <h2>Živý obraz <span id="streamName" class="muted"></span></h2>
+      <video id="video" autoplay playsinline muted></video>
+      <div class="row" style="margin-top:12px">
+        <button id="stop" class="sec" disabled>Ukončit stream</button>
+        <span id="streamMsg" class="muted"></span>
+      </div>
+    </div>
+
+    <div class="c">
+      <h2>Události a diagnostický log</h2>
+      <div class="row"><button id="loadEvents" class="sec">Načíst log</button></div>
+      <pre id="events" style="margin-top:12px">Zatím nenačteno.</pre>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
+
+let pc = null;
+let sessionUrl = null;
+
+// Device names and IDs come back from Ring, so never trust them as markup.
+function esc(v) {
+  return String(v ?? '').replace(/[&<>"']/g, (c) =>
+    ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+async function api(path, options) {
+  const res = await fetch(path, options);
+  let body = {};
+  try { body = await res.json(); } catch { /* non-JSON error page */ }
+  return { res, body };
+}
+
+/* ---------- status ---------- */
+
+function renderDiag(s) {
+  const rows = [];
+  const yn = (v) => v ? '<span class="ok">ano</span>' : '<span class="bad">ne</span>';
+
+  rows.push(['Ring účet propojen', yn(s.linked)]);
+  if (s.account_id) rows.push(['Account ID', `<code>${esc(s.account_id)}</code>`]);
+  if (s.account_id_source) rows.push(['Zdroj account_id', `<code>${esc(s.account_id_source)}</code>`]);
+  if (s.linked_at) rows.push(['Propojeno', new Date(s.linked_at).toLocaleString('cs-CZ')]);
+  if (s.token_expires_at) rows.push(['Token platný do', new Date(s.token_expires_at).toLocaleString('cs-CZ')]);
+  rows.push(['Nevyzvednuté tokeny', String(s.unclaimed_tokens ?? '–')]);
+  rows.push(['Netlify Blobs', s.blobs === 'reachable' ? '<span class="ok">dostupné</span>' : '<span class="bad">nedostupné</span>']);
+
+  const missing = s.missing || [];
+  rows.push([
+    'Konfigurace',
+    missing.length
+      ? `<span class="bad">chybí: ${esc(missing.join(', '))}</span>`
+      : '<span class="ok">kompletní</span>'
+  ]);
+  if (s.error) rows.push(['Chyba', `<span class="bad">${esc(s.error)}</span>`]);
+
+  $('diag').innerHTML = rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join('');
+}
+
+async function refreshStatus() {
+  const { body } = await api('/api/status');
+
+  if (!body.authenticated) {
+    $('loginCard').classList.remove('hide');
+    $('app').classList.add('hide');
+    const missing = body.missing || [];
+    if (missing.length) {
+      $('loginMsg').innerHTML = `<span class="bad">V Netlify chybí proměnné: ${esc(missing.join(', '))}</span>`;
+    }
+    return;
+  }
+
+  $('loginCard').classList.add('hide');
+  $('app').classList.remove('hide');
+  renderDiag(body);
+}
+
+$('loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  $('loginMsg').textContent = 'Přihlašuji…';
+  const { res, body } = await api('/api/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: $('pw').value })
+  });
+  if (!res.ok) { $('loginMsg').innerHTML = `<span class="bad">${esc(body.error || 'Chyba')}</span>`; return; }
+  $('loginMsg').textContent = '';
+  $('pw').value = '';
+  refreshStatus();
+};
+
+/* ---------- devices ---------- */
+
+$('loadDevices').onclick = async () => {
+  $('devices').textContent = 'Načítám…';
+  const { res, body } = await api('/api/devices');
+
+  if (!res.ok) {
+    $('devices').innerHTML = `<span class="bad">${esc(body.error || res.status)}</span>`;
+    return;
+  }
+  if (!body.devices || !body.devices.length) {
+    $('devices').textContent = 'Ring nevrátil žádné zařízení.';
+    return;
+  }
+
+  $('devices').innerHTML = body.devices.map((d) => `
+    <div class="dev">
+      <div>
+        <strong>${esc(d.name)}</strong><br>
+        <span class="muted">${esc(d.id)}${d.kind ? ' · ' + esc(d.kind) : ''}${d.online === false ? ' · offline' : ''}</span>
+      </div>
+      <button data-id="${esc(d.id)}" data-name="${esc(d.name)}">Živý obraz</button>
+    </div>`).join('');
+
+  $('devices').querySelectorAll('button').forEach((b) => {
+    b.onclick = () => startStream(b.dataset.id, b.dataset.name);
+  });
+};
+
+/* ---------- WHEP live stream ---------- */
+
+// Ring answers a single SDP offer, so gather ICE candidates before sending
+// rather than trickling them afterwards.
+function waitForIce(peer) {
+  if (peer.iceGatheringState === 'complete') return Promise.resolve();
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(timer); peer.removeEventListener('icegatheringstatechange', check); resolve(); };
+    const check = () => { if (peer.iceGatheringState === 'complete') done(); };
+    const timer = setTimeout(done, 3000);
+    peer.addEventListener('icegatheringstatechange', check);
+  });
+}
+
+async function startStream(deviceId, name) {
+  await stopStream();
+  $('streamName').textContent = '– ' + name;
+  $('streamMsg').textContent = 'Navazuji spojení…';
+
+  try {
+    pc = new RTCPeerConnection({ iceServers: ICE });
+
+    pc.addEventListener('track', (e) => { $('video').srcObject = e.streams[0]; });
+    pc.addEventListener('connectionstatechange', () => {
+      $('streamMsg').textContent = 'Stav spojení: ' + pc.connectionState;
+    });
+
+    pc.addTransceiver('audio', { direction: 'sendrecv' });
+    pc.addTransceiver('video', { direction: 'recvonly' });
+
+    await pc.setLocalDescription(await pc.createOffer());
+    await waitForIce(pc);
+
+    const { res, body } = await api('/api/stream', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ deviceId, sdpOffer: pc.localDescription.sdp })
+    });
+
+    if (!res.ok) throw new Error(body.detail || body.error || ('HTTP ' + res.status));
+
+    sessionUrl = body.sessionUrl || null;
+    await pc.setRemoteDescription({ type: 'answer', sdp: body.sdpAnswer });
+
+    $('stop').disabled = false;
+  } catch (e) {
+    $('streamMsg').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
+    await stopStream();
+  }
+}
+
+async function stopStream() {
+  if (sessionUrl) {
+    try {
+      await api('/api/stream', {
+        method: 'DELETE',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionUrl })
+      });
+    } catch { /* session expires on Ring's side anyway */ }
+    sessionUrl = null;
+  }
+  if (pc) { pc.close(); pc = null; }
+  $('video').srcObject = null;
+  $('stop').disabled = true;
+}
+
+$('stop').onclick = async () => { await stopStream(); $('streamMsg').textContent = 'Stream ukončen.'; };
+window.addEventListener('pagehide', () => { stopStream(); });
+
+/* ---------- events ---------- */
+
+$('loadEvents').onclick = async () => {
+  $('events').textContent = 'Načítám…';
+  const { res, body } = await api('/api/events');
+  if (!res.ok) { $('events').textContent = body.error || ('HTTP ' + res.status); return; }
+  $('events').textContent = body.items && body.items.length
+    ? JSON.stringify(body.items, null, 2)
+    : 'Zatím žádné události ani diagnostické záznamy.';
+};
+
+refreshStatus();
+</script>
+</body>
+</html>

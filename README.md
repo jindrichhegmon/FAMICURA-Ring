@@ -30,3 +30,43 @@ Add these two additional Netlify Environment Variables:
 - `NETLIFY_AUTH_TOKEN` = a Netlify Personal Access Token created under User settings -> Applications -> Personal access tokens
 
 The token must be treated as a secret and must never be committed to GitHub.
+
+## v4 - diagnostika a WHEP live stream
+
+### Co přibylo
+
+**Živý obraz z kamer.** Nová funkce `/api/stream` proxuje WHEP handshake proti
+`POST https://api.amazonvision.com/v1/devices/{deviceId}/media/streaming/whep/sessions`.
+Prohlížeč pošle SDP offer, funkce ho podepíše Ring access tokenem a vrátí SDP answer;
+access token se do prohlížeče nikdy nedostane. `DELETE /api/stream` ukončí session
+(cíl je omezen na origin Ring API). Homepage nabídne seznam kamer a přehrává obraz
+přes `RTCPeerConnection`.
+
+**Silná konzistence Netlify Blobs.** `getStore` nově používá `consistency: "strong"`.
+Výpis blobů je jinak eventuálně konzistentní, takže `link-claim` nemuselo vidět token,
+který `token-exchange` zapsalo o vteřinu dřív. `link-claim` navíc zkouší match 4x
+s odstupem 800 ms.
+
+**Diagnostika.** `/api/status` hlásí, které proměnné prostředí chybí (nikdy jejich
+hodnoty), dostupnost Blobs, počet nevyzvednutých tokenů a z jakého pole se vzalo
+`account_id`. `/api/events` vypisuje uložené webhooky i diagnostické záznamy
+(`diag-*`) - včetně toho, jaké hlavičky přišly u odmítnutého webhooku.
+
+**Webhook podpis.** Ověřuje se proti několika možným názvům hlavičky
+(`x-signature`, `x-ring-signature`, `x-hub-signature-256`, ...). Když žádná nesedne,
+do logu se uloží seznam přijatých hlaviček, aby šlo zjistit, jak se signatura jmenuje.
+
+**Autentizace.** `/api/devices`, `/api/status`, `/api/events` a `/api/stream` nově
+vyžadují session cookie podepsanou `RING_HMAC_KEY`. Získáte ji přes `/api/login`
+heslem `FAMICURA_LINK_PASSWORD`, nebo automaticky po úspěšném propojení na `/link`.
+Ring endpointy (`/api/token-exchange`, `/api/webhook`, `/api/link-claim`) zůstávají
+veřejné - Ring je volá bez cookie.
+
+### Ladění propojení
+
+Přihlaste se na homepage a podívejte se do sekce Diagnostika a Log:
+
+- *chybí proměnné* - doplňte je v Netlify, jinak každá funkce vrací 500
+- *Nevyzvednuté tokeny = 0* - Ring nezavolal Token Exchange URL, hledejte `exchange-*` v logu
+- *nonce neodpovídá* - ověřte `RING_HMAC_KEY` a `account_id_source` v záznamu `exchange-ok`
+- *webhook-rejected* - v záznamu je seznam hlaviček, které Ring skutečně poslal

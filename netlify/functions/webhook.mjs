@@ -1,75 +1,43 @@
 import crypto from "node:crypto";
-import {
-  verifyWebhook,
-  eventsStore
-} from "./_ring.mjs";
+import { verifyWebhook, eventsStore, putDiag, json } from "./_ring.mjs";
 
 export default async (req) => {
-  if (req.method !== "POST") {
-    return new Response(JSON.stringify({
-      ok:false,
-      error:"POST required"
-    }), {
-      status:405,
-      headers:{ "content-type":"application/json" }
-    });
-  }
+  if (req.method !== "POST") return json({ ok:false, error:"POST required" }, 405);
 
   try {
     const raw = await req.text();
-    const signature = req.headers.get("x-signature") || "";
+    const result = verifyWebhook(raw, req.headers);
 
-    if (!verifyWebhook(raw, signature)) {
-      return new Response(JSON.stringify({
-        ok:false,
-        error:"Invalid Ring webhook signature"
-      }), {
-        status:401,
-        headers:{ "content-type":"application/json" }
+    if (!result.ok) {
+      // Record the header names we did receive (never their values) so a
+      // mismatched signature header is visible in /api/events.
+      await putDiag("webhook-rejected", {
+        signature_headers_present: result.seen,
+        all_header_names: [...req.headers.keys()],
+        body_bytes: raw.length
       });
+      return json({ ok:false, error:"Invalid Ring webhook signature" }, 401);
     }
 
     let payload;
     try {
       payload = JSON.parse(raw);
     } catch {
-      return new Response(JSON.stringify({
-        ok:false,
-        error:"Invalid JSON"
-      }), {
-        status:400,
-        headers:{ "content-type":"application/json" }
-      });
+      return json({ ok:false, error:"Invalid JSON" }, 400);
     }
 
-    const requestId =
-      payload?.meta?.request_id ||
-      crypto.randomUUID();
+    const requestId = payload?.meta?.request_id || crypto.randomUUID();
 
-    const store = eventsStore();
-
-    await store.setJSON(
-      `event-${Date.now()}-${requestId}`,
+    await eventsStore().setJSON(`event-${Date.now()}-${requestId}`, {
+      received_at: new Date().toISOString(),
+      signature_header: result.header,
       payload
-    );
-
-    return new Response(JSON.stringify({ ok:true }), {
-      status:200,
-      headers:{
-        "content-type":"application/json",
-        "cache-control":"no-store"
-      }
     });
 
+    return json({ ok:true });
   } catch (e) {
     console.error("webhook", e);
-
-    return new Response(JSON.stringify({
-      ok:false,
-      error:e.message
-    }), {
-      status:500,
-      headers:{ "content-type":"application/json" }
-    });
+    await putDiag("webhook-error", { error: e.message });
+    return json({ ok:false, error:e.message }, 500);
   }
 };
