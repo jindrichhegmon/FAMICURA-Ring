@@ -117,3 +117,43 @@ ze zpětné analýzy na průběžný stavový automat (`public/analyzer.js`).
 která má nohy na zemi, může vyjít jako ležící - těžiště ohraničujícího
 obdélníku klesne pod práh. Výstup slouží k rychlé kontrole záznamu, ne jako
 zdravotnické vyhodnocení.
+
+## v6 - hlídač zamrznutí a export logu
+
+### Proč se obraz zasekával
+
+Ring live session nemá neomezenou délku a telefon ztratí peer connection při
+změně sítě nebo odchodu na pozadí. Oboje selhává tiše: obraz zůstane na
+posledním snímku, `connectionState` dál hlásí `connected` a nic to nepozná.
+Analýza pak přestane dostávat snímky a log se zastaví.
+
+Řešení je hlídač, který každé 2 s vzorkuje `video.currentTime`. Když se
+7 s nepohne, spojení se považuje za mrtvé a naváže se znovu - stejná kamera,
+exponenciální odstup 1-15 s, nejvýše 8 pokusů. Pak se ukáže tlačítko
+**Připojit znovu**. Vzorkování času nezávisí na žádné události, takže funguje
+i v normálním režimu, kde neběží canvas.
+
+Navíc:
+
+- `connectionstatechange` na `failed` spustí obnovení okamžitě; `disconnected`
+  se jen zobrazí, protože se často spraví samo a jinak ho chytí hlídač
+- odchod na pozadí (`pagehide`, `visibilitychange`) uvolní Ring session, návrat
+  ji obnoví - kamera neběží, když se nikdo nedívá. Během nahrávání se
+  neuvolňuje, aby se záznam nepřerušil
+- každé připojení si drží referenci na svoje `RTCPeerConnection`, takže
+  opožděná odpověď ze starého pokusu nepřepíše nový stream
+- po obnovení dostane analyzátor `notePause()`. Rychlost pohybu se počítá
+  z předchozího snímku, takže bez toho by mezera vyrobila falešný pád
+
+### Log analýzy
+
+Každý řádek nese **reálný čas** (hh:mm:ss), čas od začátku analýzy a **název
+kamery**, ze které událost pochází.
+
+Pod logem je **Stáhnout log**: datum od-do a čas od-do, prázdná pole znamenají
+bez omezení. Výstup je CSV se středníkem a BOM (české Excel ho otevře i s
+diakritikou) se sloupci Datum, Čas, Od začátku analýzy, Kamera, ID kamery,
+Typ, Závažnost, Popis. Název souboru obsahuje zvolené období.
+
+V paměti se drží až 5000 záznamů, seznam na stránce zobrazuje posledních 200 -
+export ale pracuje s celou historií.

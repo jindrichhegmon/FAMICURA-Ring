@@ -96,6 +96,22 @@ export class LiveAnalyzer {
     this.count = 0;
   }
 
+  /**
+   * The stream dropped and came back. Motion is derived from the previous
+   * frame, so comparing across the gap would invent a velocity; the reported
+   * posture is kept so a reconnect does not re-announce what is already known.
+   */
+  notePause() {
+    this.prev = null;
+    this.back2 = null;
+    this.candidate = null;
+    this.fallLyingSince = null;
+    this.lyingSince = null;
+    this.missingSince = null;
+    this.missingReported = false;
+    this.pendingState = null;
+  }
+
   emit(t, kind, level, text) {
     this.onEvent({ t, kind, level, text });
   }
@@ -299,6 +315,21 @@ export function drawSkeleton(ctx, canvas, lm, connections) {
   ctx.restore();
 }
 
+/* ---------- log entries and export ---------- */
+
+function pad(n) { return String(n).padStart(2, "0"); }
+
+/** Wall-clock time of day, which is what a carer reads off the log. */
+export function fmtClock(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+export function fmtDate(date) {
+  const d = date instanceof Date ? date : new Date(date);
+  return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
 /**
  * Builds one log row. Event text originates from this module, but it is still
  * written with textContent so a future source cannot inject markup.
@@ -309,12 +340,94 @@ export function createLogEntry(doc, ev) {
 
   const ts = doc.createElement("span");
   ts.className = "ts";
-  ts.textContent = fmtTime(ev.t);
+  const clock = doc.createElement("strong");
+  clock.textContent = fmtClock(ev.at || new Date());
+  const since = doc.createElement("small");
+  since.textContent = `+${fmtTime(ev.t)}`;
+  ts.append(clock, since);
 
+  const body = doc.createElement("span");
+  body.className = "msg";
   const msg = doc.createElement("span");
-  msg.className = "msg";
   msg.textContent = ev.text;
+  body.append(msg);
+  if (ev.device?.name) {
+    const cam = doc.createElement("small");
+    cam.className = "cam";
+    cam.textContent = ev.device.name;
+    body.append(cam);
+  }
 
-  li.append(ts, msg);
+  li.append(ts, body);
   return li;
+}
+
+/**
+ * Turns date and time inputs into a bound. Either part may be blank: with no
+ * date there is no bound at all, and with no time the range opens at midnight
+ * and closes just before the next one.
+ */
+export function boundFrom(dateStr, timeStr, isEnd) {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  if (!y || !m || !d) return null;
+  let hh = isEnd ? 23 : 0, mm = isEnd ? 59 : 0, ss = isEnd ? 59 : 0, ms = isEnd ? 999 : 0;
+  if (timeStr) {
+    const parts = timeStr.split(":").map(Number);
+    if (Number.isFinite(parts[0])) hh = parts[0];
+    if (Number.isFinite(parts[1])) mm = parts[1];
+    ss = Number.isFinite(parts[2]) ? parts[2] : (isEnd ? 59 : 0);
+    ms = isEnd ? 999 : 0;
+  }
+  return new Date(y, m - 1, d, hh, mm, ss, ms);
+}
+
+export function filterLog(entries, from, to) {
+  return entries.filter((e) => {
+    const at = e.at instanceof Date ? e.at : new Date(e.at);
+    if (from && at < from) return false;
+    if (to && at > to) return false;
+    return true;
+  });
+}
+
+function csvCell(value) {
+  const v = String(value ?? "");
+  return /[";\n\r]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+}
+
+const KIND_LABEL = {
+  state: "poloha", fall: "možný pád", longlie: "dlouhé ležení",
+  missing: "ztráta detekce", found: "návrat detekce", abrupt: "prudká změna",
+  stream: "spojení"
+};
+
+/**
+ * Semicolon separated, which is what Czech Excel expects; the caller prepends
+ * a BOM so diacritics survive the round trip.
+ */
+export function logToCsv(entries) {
+  const head = ["Datum", "Čas", "Od začátku analýzy", "Kamera", "ID kamery", "Typ", "Závažnost", "Popis"];
+  const rows = entries.map((e) => {
+    const at = e.at instanceof Date ? e.at : new Date(e.at);
+    return [
+      fmtDate(at), fmtClock(at), fmtTime(e.t),
+      e.device?.name || "", e.device?.id || "",
+      KIND_LABEL[e.kind] || e.kind || "",
+      e.level === "warn" ? "varování" : "informace",
+      e.text
+    ].map(csvCell).join(";");
+  });
+  return [head.join(";"), ...rows].join("\r\n");
+}
+
+/** Stable, sortable filename covering the exported range. */
+export function csvFilename(from, to) {
+  const stamp = (d) => {
+    const x = d instanceof Date ? d : new Date(d);
+    return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}_${pad(x.getHours())}-${pad(x.getMinutes())}`;
+  };
+  const a = from ? stamp(from) : "od-zacatku";
+  const b = to ? stamp(to) : "do-konce";
+  return `famicura-log_${a}_${b}.csv`;
 }

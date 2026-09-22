@@ -95,7 +95,17 @@
   #log li{padding:9px 0;border-bottom:1px solid #eef2f6;font-size:.92rem;display:flex;gap:10px}
   #log li:last-child{border-bottom:0}
   #log .ts{color:#5a6b7d;font-variant-numeric:tabular-nums;flex:0 0 auto}
-  #log li.warn .msg{color:#9a5710;font-weight:700}
+  #log li.warn .msg > span:first-child{color:#9a5710;font-weight:700}
+  #log .ts{display:flex;flex-direction:column;line-height:1.25}
+  #log .ts small{color:#8494a5;font-weight:400;font-size:.78rem}
+  #log .msg{display:flex;flex-direction:column;gap:2px;min-width:0;overflow-wrap:anywhere}
+  #log .cam{color:#5a6b7d;font-size:.78rem}
+
+  #export{margin-top:14px;border-top:1px solid #eef2f6;padding-top:12px}
+  #export summary{font-weight:700;cursor:pointer;padding:10px 0;min-height:44px;line-height:24px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid2 label{display:flex;flex-direction:column;gap:5px;font-size:.85rem;color:#5a6b7d}
+  @media (max-width:380px){ .grid2{grid-template-columns:1fr} }
 
   @media (max-width:640px){
     .kv > span:last-child{text-align:left;flex-basis:100%}
@@ -146,6 +156,7 @@
         <button id="record" class="rec">● Nahrávat</button>
         <button id="analyze">Spustit analýzu</button>
         <button id="sound" class="sec hide">Zapnout zvuk</button>
+        <button id="retry" class="hide">Připojit znovu</button>
         <button id="stop" class="sec" disabled>Ukončit</button>
       </div>
 
@@ -164,6 +175,20 @@
       <h2>Log analýzy</h2>
       <ul id="log"></ul>
       <p id="logEmpty" class="muted">Zatím se nic nestalo.</p>
+
+      <details id="export">
+        <summary>Stáhnout log</summary>
+        <div class="grid2">
+          <label>Datum od <input id="dFrom" type="date"></label>
+          <label>Čas od <input id="tFrom" type="time"></label>
+          <label>Datum do <input id="dTo" type="date"></label>
+          <label>Čas do <input id="tTo" type="time"></label>
+        </div>
+        <button id="download" class="wide" style="margin-top:12px">Stáhnout CSV</button>
+        <p id="exportMsg" class="muted" style="margin:10px 0 0">
+          Prázdná pole znamenají bez omezení. Soubor obsahuje datum, čas a kameru u každého řádku.
+        </p>
+      </details>
     </div>
 
     <div class="c">
@@ -180,7 +205,8 @@
 </div>
 
 <script type="module">
-import { LiveAnalyzer, fmtTime, drawBackground, drawSkeleton, createLogEntry } from '/analyzer.js';
+import { LiveAnalyzer, fmtTime, drawBackground, drawSkeleton, createLogEntry,
+         boundFrom, filterLog, logToCsv, csvFilename } from '/analyzer.js';
 
 const $ = (id) => document.getElementById(id);
 const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
@@ -321,33 +347,121 @@ function waitForIce(peer) {
   });
 }
 
-async function startStream(deviceId, name) {
-  await stopStream();
+/*
+ * Ring live sessions do not last forever, and a phone that changes network or
+ * goes to the background loses the peer connection. Both fail quietly: the
+ * picture holds its last frame while connectionState still reads "connected",
+ * so nothing but the frames themselves proves the stream is alive.
+ */
+const STALL_MS = 7000;        // no new frame for this long counts as frozen
+const WATCHDOG_MS = 2000;
+const MAX_RECONNECTS = 8;
+
+let currentDevice = null;     // what the user asked to watch
+let wantStream = false;       // ...and whether they still want it
+let reconnectAttempt = 0;
+let reconnectTimer = null;
+let watchdogId = null;
+let watchTime = -1;
+let stalledFor = 0;
+
+function setMsg(text, bad) {
+  $('streamMsg').innerHTML = bad ? `<span class="bad">${esc(text)}</span>` : esc(text);
+}
+
+function startWatchdog() {
+  stopWatchdog();
+  watchTime = -1;
+  stalledFor = 0;
+  watchdogId = setInterval(() => {
+    if (!wantStream || !pc) return;
+    const v = $('video');
+    if (v.currentTime !== watchTime) {   // sampling currentTime needs no events
+      watchTime = v.currentTime;
+      stalledFor = 0;
+      return;
+    }
+    stalledFor += WATCHDOG_MS;
+    if (stalledFor >= STALL_MS) reconnect('Obraz se zastavil');
+  }, WATCHDOG_MS);
+}
+
+function stopWatchdog() {
+  if (watchdogId !== null) { clearInterval(watchdogId); watchdogId = null; }
+}
+
+function reconnect(reason) {
+  if (!wantStream || !currentDevice || reconnectTimer !== null) return;
+  stopWatchdog();
+
+  if (reconnectAttempt >= MAX_RECONNECTS) {
+    giveUp(reason);
+    return;
+  }
+
+  const delay = Math.min(15000, 1000 * Math.pow(2, reconnectAttempt));
+  reconnectAttempt++;
+  setMsg(`${reason}. Obnovuji spojení… (pokus ${reconnectAttempt})`);
+  if (analyzing) {
+    analyzer.notePause();
+    appendLog({ t: (Date.now() - analysisStartedAt) / 1000, level: 'warn',
+                text: `${reason} – analýza pokračuje po obnovení spojení.` });
+  }
+
+  reconnectTimer = setTimeout(async () => {
+    reconnectTimer = null;
+    await teardown({ keepIntent: true });
+    if (wantStream && currentDevice) startStream(currentDevice.id, currentDevice.name, true);
+  }, delay);
+}
+
+function giveUp(reason) {
+  wantStream = false;
+  setMsg(`${reason}. Spojení se nepodařilo obnovit.`, true);
+  $('retry').classList.remove('hide');
+  if (recording) stopRecording();
+  if (analyzing) stopAnalysis();
+}
+
+async function startStream(deviceId, name, isReconnect) {
+  if (!isReconnect) {
+    reconnectAttempt = 0;
+    $('retry').classList.add('hide');
+  }
+  await teardown({ keepIntent: true });
+
+  currentDevice = { id: deviceId, name };
+  wantStream = true;
+
   $('streamName').textContent = '– ' + name;
-  $('streamMsg').textContent = 'Navazuji spojení…';
+  setMsg(isReconnect ? 'Obnovuji spojení…' : 'Navazuji spojení…');
   $('streamCard').classList.remove('hide');
-  $('streamCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  if (!isReconnect) $('streamCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 
   try {
     pc = new RTCPeerConnection({ iceServers: ICE });
+    const thisPc = pc;
 
     pc.addEventListener('track', (e) => {
+      if (pc !== thisPc) return;          // a stale connection must not hijack the player
       const v = $('video');
       v.srcObject = e.streams[0];
       // iOS Safari will not start playback on its own in every case; muted
       // playback is always allowed, so offer sound as a separate tap.
       v.play().then(() => {
-        $('streamMsg').textContent = 'Přehrávám.';
+        setMsg(reconnectAttempt ? 'Spojení obnoveno, přehrávám.' : 'Přehrávám.');
+        reconnectAttempt = 0;
         $('sound').classList.remove('hide');
       }).catch(() => {
-        $('streamMsg').textContent = 'Klepněte na obraz pro spuštění.';
+        setMsg('Klepněte na obraz pro spuštění.');
       });
     });
 
     pc.addEventListener('connectionstatechange', () => {
-      if (pc && (pc.connectionState === 'failed' || pc.connectionState === 'disconnected')) {
-        $('streamMsg').innerHTML = '<span class="bad">Spojení přerušeno.</span>';
-      }
+      if (pc !== thisPc) return;
+      // "disconnected" often recovers by itself; the watchdog catches it if not.
+      if (pc.connectionState === 'failed') reconnect('Spojení selhalo');
+      else if (pc.connectionState === 'disconnected') setMsg('Spojení kolísá…');
     });
 
     pc.addTransceiver('audio', { direction: 'sendrecv' });
@@ -362,20 +476,41 @@ async function startStream(deviceId, name) {
       body: JSON.stringify({ deviceId, sdpOffer: pc.localDescription.sdp })
     });
 
+    if (pc !== thisPc) return;            // superseded while the request was in flight
     if (!res.ok) throw new Error(body.detail || body.error || ('HTTP ' + res.status));
 
     sessionUrl = body.sessionUrl || null;
     await pc.setRemoteDescription({ type: 'answer', sdp: body.sdpAnswer });
 
     $('stop').disabled = false;
+    startWatchdog();
     updateRender();
   } catch (e) {
-    $('streamMsg').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
-    await stopStream();
+    if (wantStream && currentDevice) reconnect(`Nepodařilo se připojit (${e.message})`);
+    else { setMsg(e.message, true); await teardown({ keepIntent: false }); }
   }
 }
 
-async function stopStream() {
+$('retry').onclick = () => {
+  if (!currentDevice) return;
+  reconnectAttempt = 0;
+  $('retry').classList.add('hide');
+  startStream(currentDevice.id, currentDevice.name, false);
+};
+
+/**
+ * Releases the Ring session and the peer connection. keepIntent leaves the
+ * user's wish to watch in place, so a reconnect or a return to the tab can
+ * pick it back up.
+ */
+async function teardown({ keepIntent }) {
+  stopWatchdog();
+  if (!keepIntent) {
+    wantStream = false;
+    currentDevice = null;
+    if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  }
+
   if (sessionUrl) {
     try {
       await api('/api/stream', {
@@ -387,6 +522,7 @@ async function stopStream() {
     sessionUrl = null;
   }
   if (pc) { pc.close(); pc = null; }
+
   const v = $('video');
   v.srcObject = null;
   v.muted = true;
@@ -395,6 +531,26 @@ async function stopStream() {
   $('sound').classList.add('hide');
   $('stop').disabled = true;
 }
+
+// Leaving the page should not keep a camera streaming; coming back should not
+// leave a dead player behind. iOS fires pagehide rather than unload.
+function onPageHidden() {
+  if (!wantStream || recording) return;   // never cut a recording short
+  teardown({ keepIntent: true });
+  setMsg('Pozastaveno – obnoví se po návratu.');
+}
+
+function onPageVisible() {
+  if (wantStream && !pc && currentDevice) {
+    reconnectAttempt = 0;
+    startStream(currentDevice.id, currentDevice.name, true);
+  }
+}
+
+window.addEventListener('pagehide', onPageHidden);
+window.addEventListener('pageshow', onPageVisible);
+document.addEventListener('visibilitychange', () =>
+  (document.visibilityState === 'hidden' ? onPageHidden() : onPageVisible()));
 
 $('sound').onclick = () => {
   const v = $('video');
@@ -406,8 +562,9 @@ $('sound').onclick = () => {
 $('stop').onclick = async () => {
   stopAnalysis();
   if (recording) stopRecording();
-  await stopStream();
-  $('streamMsg').textContent = 'Stream ukončen.';
+  $('retry').classList.add('hide');
+  await teardown({ keepIntent: false });
+  setMsg('Stream ukončen.');
 };
 
 /* ---------- display mode ---------- */
@@ -565,11 +722,50 @@ $('shareBtn').onclick = async () => {
 let analyzing = false, landmarker = null, poseConnections = [], analysisStartedAt = 0;
 const analyzer = new LiveAnalyzer(appendLog);
 
+// Kept beyond what the list shows, so an export can cover a whole shift.
+const logEntries = [];
+const MAX_LOG_ENTRIES = 5000;
+
 function appendLog(ev) {
+  const entry = { ...ev, at: ev.at || new Date(), device: ev.device || currentDevice };
+  logEntries.push(entry);
+  if (logEntries.length > MAX_LOG_ENTRIES) logEntries.shift();
+
   $('logEmpty').classList.add('hide');
-  $('log').prepend(createLogEntry(document, ev)); // newest first: no scrolling on a phone
+  $('log').prepend(createLogEntry(document, entry)); // newest first: no scrolling on a phone
   while ($('log').children.length > 200) $('log').lastElementChild.remove();
 }
+
+$('download').onclick = () => {
+  const from = boundFrom($('dFrom').value, $('tFrom').value, false);
+  const to = boundFrom($('dTo').value, $('tTo').value, true);
+
+  if (from && to && from > to) {
+    $('exportMsg').innerHTML = '<span class="bad">Začátek období je po jeho konci.</span>';
+    return;
+  }
+
+  const rows = filterLog(logEntries, from, to);
+  if (!rows.length) {
+    $('exportMsg').innerHTML = '<span class="bad">Ve zvoleném období není žádný záznam.</span>';
+    return;
+  }
+
+  // The BOM is what makes Excel read the diacritics as UTF-8.
+  const blob = new Blob(['\uFEFF' + logToCsv(rows)], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = csvFilename(from, to);
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+
+  const cams = new Set(rows.map((r) => r.device?.name).filter(Boolean));
+  $('exportMsg').textContent =
+    `Staženo ${rows.length} záznamů` + (cams.size ? ` (${[...cams].join(', ')}).` : '.');
+};
 
 async function loadModel() {
   if (landmarker) return;
@@ -629,9 +825,6 @@ function stopAnalysis() {
 }
 
 $('analyze').onclick = () => (analyzing ? stopAnalysis() : startAnalysis());
-
-// iOS fires pagehide, not unload, when Safari suspends the tab.
-window.addEventListener('pagehide', () => { stopStream(); });
 
 /* ---------- events ---------- */
 
