@@ -41,11 +41,17 @@ export function activeInterval(intervals, date = new Date()) {
  * first device with an open window, so the caller has one answer to act on.
  */
 export function dueRecording(schedules, date = new Date()) {
+  return dueRecordings(schedules, date)[0] || null;
+}
+
+/** Every camera whose window is open now – several can record at once. */
+export function dueRecordings(schedules, date = new Date()) {
+  const due = [];
   for (const [deviceId, intervals] of Object.entries(schedules || {})) {
     const interval = activeInterval(intervals, date);
-    if (interval) return { deviceId, interval };
+    if (interval) due.push({ deviceId, interval });
   }
-  return null;
+  return due;
 }
 
 export function fmtInterval(interval) {

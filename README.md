@@ -402,3 +402,39 @@ Doplňuje je skript, spouští se z Macu ve složce projektu:
   variables). Vstup je skrytý a do ssh jde přes stdin, takže hodnota
   nebude v historii příkazů ani ve výpisu procesů.
 * Vypíše, které klíče jsou vyplněné (bez hodnot), a restartuje aplikaci.
+
+## v16 - víc kamer najednou
+
+Každá otevřená kamera má vlastní kartu s vlastním spojením, hlídačem
+zamrznutí, zobrazením, nahráváním a analýzou (`public/camera-view.js`,
+třída `CameraView`). Stránka drží jen to, co je společné: log analýzy,
+seznam nahrávek, frontu do CLB1, složku a plánovač.
+
+* Najednou jdou otevřít **nejvýš 4 kamery**. Víc telefon nezvládne, protože
+  každá kamera znamená dekódování videa navíc a v jiném režimu než
+  Normální i překreslování canvasu. Pátou stránka odmítne a řekne proč.
+* Na počítači jsou karty dvě vedle sebe, na telefonu pod sebou.
+* **Zvuk hraje vždy jen z jedné kamery.** Zapnutí zvuku u jedné ztlumí ostatní.
+* Zamrzlá kamera obnovuje spojení sama. Ostatní kamery to neovlivní.
+* Analýza běží u každé kamery zvlášť a má vlastní detektor MediaPipe.
+  V režimu VIDEO detektor sleduje jednu postavu snímek po snímku, takže
+  společný detektor by míchal lidi z různých kamer. Log je společný a
+  u každého řádku je uvedená kamera.
+* **Ukončit** zavře jen svou kameru.
+
+### Plán a víc kamer
+
+Plánovač otevře naplánovanou kameru **vedle** těch, které už hrají.
+Kameru, kterou právě sledujete, nikdy nepřebírá. Víc kamer se
+překrývajícími intervaly nahrává souběžně (`dueRecordings` vrací všechny).
+Brání tomu jen limit 4 kamer: pokud je plno, plán počká a pod seznamem kamer
+vypíše, které kamery čekají. Kameru, která v plánovaném okně vzdala
+obnovování spojení, zkusí plánovač připojit znovu.
+
+### Opravené chyby
+
+* Plánované nahrávky se do CLB1 zapisovaly se zdrojem `rucne`. Zdroj se
+  četl až ve chvíli, kdy rekordér vydal soubor, a to už bylo okno plánu
+  smazané. Teď se zdroj určí při startu nahrávání.
+* **Sdílet** v prohlížeči bez sdílení stáhlo nejnovější nahrávku, ne tu,
+  na kterou jste klikli.

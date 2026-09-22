@@ -107,8 +107,15 @@
   .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
   .stage > video, .stage > canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
   .stage > video{z-index:1}
-  .stage > #canvas{z-index:2}  /* covers the video; never hide the video itself */
-  #small{display:none}
+  .stage > canvas.draw{z-index:2}  /* covers the video; never hide the video itself */
+  .stage > canvas.small{display:none}
+
+  /* One card per open camera: side by side where there is room, stacked on a
+     phone. A single camera still takes the full width. */
+  #streams{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));
+           gap:var(--gap);margin:var(--gap) 0}
+  #streams:empty{display:none}
+  #streams > .c{margin:0;min-width:0}
 
   .seg{display:flex;gap:0;border:1px solid #bcc8d1;border-radius:12px;overflow:hidden;width:100%}
   .seg button{flex:1;border-radius:0;background:#fff;color:#17212b;font-weight:600;
@@ -195,6 +202,7 @@
       </div>
 
       <div id="devices" class="muted list" style="margin-top:12px">Zatím nenačteno.</div>
+      <p id="planMsg" class="muted" style="margin:12px 0 0"></p>
     </div>
 
     <div class="c hide" id="scheduleCard">
@@ -226,40 +234,44 @@
       <p id="recEmpty" class="muted" style="margin:12px 0 0">Zatím žádná nahrávka.</p>
     </div>
 
-    <div class="c hide" id="streamCard">
-      <h2>Živý obraz <span id="streamName" class="muted"></span></h2>
+    <div id="streams"></div>
 
-      <div class="stage">
-        <video id="video" playsinline muted autoplay controls></video>
-        <canvas id="canvas" class="hide"></canvas>
-        <canvas id="small"></canvas>
+    <template id="viewTpl">
+      <div class="c view">
+        <h2>Živý obraz <span class="name muted"></span></h2>
+
+        <div class="stage">
+          <video playsinline muted autoplay controls></video>
+          <canvas class="draw hide"></canvas>
+          <canvas class="small"></canvas>
+        </div>
+
+        <p class="muted" style="margin:14px 0 6px">Zobrazení</p>
+        <div class="seg modes">
+          <button data-mode="normal" aria-pressed="true">Normální</button>
+          <button data-mode="blur" aria-pressed="false">Rozmazaný</button>
+          <button data-mode="black" aria-pressed="false">Černé pozadí</button>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <button class="record rec">● Nahrávat</button>
+          <button class="analyze">Spustit analýzu</button>
+          <button class="retry hide">Připojit znovu</button>
+        </div>
+
+        <div class="row recBar hide" style="margin-top:10px">
+          <span class="muted">Nahrávám <span class="timer">00:00</span></span>
+        </div>
+
+        <div class="row" style="margin-top:10px">
+          <button class="stop danger">Ukončit</button>
+          <button class="sound sec icon hide" type="button"
+                  aria-label="Zapnout zvuk" title="Zapnout zvuk"></button>
+        </div>
+
+        <p class="msg muted" style="margin:10px 0 0"></p>
       </div>
-
-      <p class="muted" style="margin:14px 0 6px">Zobrazení</p>
-      <div class="seg" id="modes">
-        <button data-mode="normal" aria-pressed="true">Normální</button>
-        <button data-mode="blur" aria-pressed="false">Rozmazaný</button>
-        <button data-mode="black" aria-pressed="false">Černé pozadí</button>
-      </div>
-
-      <div class="row" style="margin-top:12px">
-        <button id="record" class="rec">● Nahrávat</button>
-        <button id="analyze">Spustit analýzu</button>
-        <button id="sound" class="sec icon hide" type="button"
-                aria-label="Zapnout zvuk" title="Zapnout zvuk"></button>
-        <button id="retry" class="hide">Připojit znovu</button>
-      </div>
-
-      <div class="row hide" id="recBar" style="margin-top:10px">
-        <span class="muted">Nahrávám <span id="timer">00:00</span></span>
-      </div>
-
-      <div class="row" id="actionBar" style="margin-top:10px">
-        <button id="stop" class="danger" disabled>Ukončit</button>
-      </div>
-
-      <p id="streamMsg" class="muted" style="margin:10px 0 0"></p>
-    </div>
+    </template>
 
     <div class="c hide" id="logCard">
       <h2>Log analýzy</h2>
@@ -295,18 +307,13 @@
 </div>
 
 <script type="module">
-import { LiveAnalyzer, fmtTime, fmtClock, drawBackground, drawSkeleton, createLogEntry,
-         boundFrom, filterLog, logToCsv, csvFilename } from '/analyzer.js';
-import { MAX_INTERVALS, isWithin, activeInterval, dueRecording, fmtInterval,
-         collectIntervals } from '/schedule.js';
+import { fmtClock, createLogEntry, boundFrom, filterLog, logToCsv, csvFilename } from '/analyzer.js';
+import { MAX_INTERVALS, isWithin, dueRecordings, fmtInterval, collectIntervals } from '/schedule.js';
+import { CameraView } from '/camera-view.js';
 import { isSupported as folderSupported, pickFolder, loadHandle, saveHandle,
          forgetHandle, ensurePermission, writeFile } from '/folder.js';
 
 const $ = (id) => document.getElementById(id);
-const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
-
-let pc = null;
-let sessionUrl = null;
 
 // Device names and IDs come back from Ring, so never trust them as markup.
 function esc(v) {
@@ -321,14 +328,12 @@ async function api(path, options) {
   return { res, body };
 }
 
-// Ring ids are ~100 chars of base32; the tail is what tells them apart.
-// The card of the camera currently on screen is outlined, so it is obvious
-// which one the player is showing.
+// Every camera that is open and connected is outlined in the list, so it is
+// obvious which ones are playing.
 function markActiveCamera() {
-  const liveId = pc && currentDevice ? currentDevice.id : null;
   $('devices').querySelectorAll('.dev').forEach((card) => {
     const id = card.querySelector('button.go')?.dataset.id;
-    const active = !!liveId && id === liveId;
+    const active = !!views.get(id)?.connected;
     card.classList.toggle('active', active);
 
     const meta = card.querySelector('.meta');
@@ -491,7 +496,7 @@ $('loadDevices').onclick = async () => {
 
   $('views').classList.remove('hide');
   $('devices').querySelectorAll('button.go').forEach((b) => {
-    b.onclick = () => startStream(b.dataset.id, b.dataset.name);
+    b.onclick = () => openCamera({ id: b.dataset.id, name: b.dataset.name });
   });
   $('devices').querySelectorAll('button.sched').forEach((b) => {
     b.onclick = () => openSchedule({ id: b.dataset.id, name: b.dataset.name });
@@ -501,225 +506,63 @@ $('loadDevices').onclick = async () => {
   schedulerTick().catch(() => {});
 };
 
-/* ---------- WHEP live stream ---------- */
-
-// Ring answers a single SDP offer, so gather ICE candidates before sending
-// rather than trickling them afterwards.
-function waitForIce(peer) {
-  if (peer.iceGatheringState === 'complete') return Promise.resolve();
-  return new Promise((resolve) => {
-    const done = () => { clearTimeout(timer); peer.removeEventListener('icegatheringstatechange', check); resolve(); };
-    const check = () => { if (peer.iceGatheringState === 'complete') done(); };
-    const timer = setTimeout(done, 3000);
-    peer.addEventListener('icegatheringstatechange', check);
-  });
-}
+/* ---------- open cameras ---------- */
 
 /*
- * Ring live sessions do not last forever, and a phone that changes network or
- * goes to the background loses the peer connection. Both fail quietly: the
- * picture holds its last frame while connectionState still reads "connected",
- * so nothing but the frames themselves proves the stream is alive.
+ * Each open camera is a CameraView with its own connection, recording and
+ * analysis. Four is where a phone starts to struggle: every one is a separate
+ * video decode and, with a mode other than Normální, a canvas redrawn per frame.
  */
-const STALL_MS = 7000;        // no new frame for this long counts as frozen
-const WATCHDOG_MS = 2000;
-const MAX_RECONNECTS = 8;
+const MAX_VIEWS = 4;
+const views = new Map();      // device id -> CameraView
 
-let currentDevice = null;     // what the user asked to watch
-let wantStream = false;       // ...and whether they still want it
-let reconnectAttempt = 0;
-let reconnectTimer = null;
-let watchdogId = null;
-let watchTime = -1;
-let stalledFor = 0;
-
-function setMsg(text, bad) {
-  $('streamMsg').innerHTML = bad ? `<span class="bad">${esc(text)}</span>` : esc(text);
+function showPlan(text, bad) {
+  $('planMsg').innerHTML = !text ? '' : bad ? `<span class="bad">${esc(text)}</span>` : esc(text);
 }
 
-function startWatchdog() {
-  stopWatchdog();
-  watchTime = -1;
-  stalledFor = 0;
-  watchdogId = setInterval(() => {
-    if (!wantStream || !pc) return;
-    const v = $('video');
-    if (v.currentTime !== watchTime) {   // sampling currentTime needs no events
-      watchTime = v.currentTime;
-      stalledFor = 0;
-      return;
-    }
-    stalledFor += WATCHDOG_MS;
-    if (stalledFor >= STALL_MS) reconnect('Obraz se zastavil');
-  }, WATCHDOG_MS);
-}
-
-function stopWatchdog() {
-  if (watchdogId !== null) { clearInterval(watchdogId); watchdogId = null; }
-}
-
-function reconnect(reason) {
-  if (!wantStream || !currentDevice || reconnectTimer !== null) return;
-  stopWatchdog();
-
-  if (reconnectAttempt >= MAX_RECONNECTS) {
-    giveUp(reason);
-    return;
-  }
-
-  const delay = Math.min(15000, 1000 * Math.pow(2, reconnectAttempt));
-  reconnectAttempt++;
-  setMsg(`${reason}. Obnovuji spojení… (pokus ${reconnectAttempt})`);
-  if (analyzing) {
-    analyzer.notePause();
-    appendLog({ t: (Date.now() - analysisStartedAt) / 1000, level: 'warn',
-                text: `${reason} – analýza pokračuje po obnovení spojení.` });
-  }
-
-  reconnectTimer = setTimeout(async () => {
-    reconnectTimer = null;
-    await teardown({ keepIntent: true });
-    if (wantStream && currentDevice) startStream(currentDevice.id, currentDevice.name, true);
-  }, delay);
-}
-
-function giveUp(reason) {
-  wantStream = false;
-  setMsg(`${reason}. Spojení se nepodařilo obnovit.`, true);
-  $('retry').classList.remove('hide');
-  if (recording) stopRecording();
-  if (analyzing) stopAnalysis();
-}
-
-async function startStream(deviceId, name, isReconnect) {
-  if (!isReconnect) {
-    reconnectAttempt = 0;
-    $('retry').classList.add('hide');
-  }
-  await teardown({ keepIntent: true });
-
-  currentDevice = { id: deviceId, name };
-  wantStream = true;
-
-  $('streamName').textContent = '– ' + name;
-  setMsg(isReconnect ? 'Obnovuji spojení…' : 'Navazuji spojení…');
-  $('streamCard').classList.remove('hide');
-  if (!isReconnect) $('streamCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
-
-  try {
-    pc = new RTCPeerConnection({ iceServers: ICE });
-    const thisPc = pc;
-
-    pc.addEventListener('track', (e) => {
-      if (pc !== thisPc) return;          // a stale connection must not hijack the player
-      const v = $('video');
-      // An SDP answer without msid gives no stream on the event, so build one
-      // from the track rather than assigning undefined and showing nothing.
-      v.srcObject = e.streams[0] || new MediaStream([e.track]);
-      // iOS Safari will not start playback on its own in every case; muted
-      // playback is always allowed, so offer sound as a separate tap.
-      v.play().then(() => {
-        setMsg(reconnectAttempt ? 'Spojení obnoveno, přehrávám.' : 'Přehrávám.');
-        reconnectAttempt = 0;
-        $('sound').classList.remove('hide');
-      }).catch(() => {
-        setMsg('Klepněte na obraz pro spuštění.');
-      });
-    });
-
-    pc.addEventListener('connectionstatechange', () => {
-      if (pc !== thisPc) return;
-      // "disconnected" often recovers by itself; the watchdog catches it if not.
-      if (pc.connectionState === 'failed') reconnect('Spojení selhalo');
-      else if (pc.connectionState === 'disconnected') setMsg('Spojení kolísá…');
-    });
-
-    pc.addTransceiver('audio', { direction: 'sendrecv' });
-    pc.addTransceiver('video', { direction: 'recvonly' });
-
-    await pc.setLocalDescription(await pc.createOffer());
-    await waitForIce(pc);
-
-    const { res, body } = await api('/api/stream', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ deviceId, sdpOffer: pc.localDescription.sdp })
-    });
-
-    if (pc !== thisPc) return;            // superseded while the request was in flight
-    if (!res.ok) throw new Error(body.detail || body.error || ('HTTP ' + res.status));
-
-    sessionUrl = body.sessionUrl || null;
-    await pc.setRemoteDescription({ type: 'answer', sdp: body.sdpAnswer });
-
-    $('stop').disabled = false;
-    startWatchdog();
-    markActiveCamera();
-    updateRender();
-  } catch (e) {
-    if (wantStream && currentDevice) reconnect(`Nepodařilo se připojit (${e.message})`);
-    else { setMsg(e.message, true); await teardown({ keepIntent: false }); }
-  }
-}
-
-$('retry').onclick = () => {
-  if (!currentDevice) return;
-  reconnectAttempt = 0;
-  $('retry').classList.add('hide');
-  startStream(currentDevice.id, currentDevice.name, false);
-};
-
-/**
- * Releases the Ring session and the peer connection. keepIntent leaves the
- * user's wish to watch in place, so a reconnect or a return to the tab can
- * pick it back up.
- */
-async function teardown({ keepIntent }) {
-  stopWatchdog();
-  if (!keepIntent) {
-    wantStream = false;
-    currentDevice = null;
-    if (reconnectTimer !== null) { clearTimeout(reconnectTimer); reconnectTimer = null; }
-  }
-
-  if (sessionUrl) {
-    try {
-      await api('/api/stream', {
-        method: 'DELETE',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ sessionUrl })
-      });
-    } catch { /* session expires on Ring's side anyway */ }
-    sessionUrl = null;
-  }
-  if (pc) { pc.close(); pc = null; }
-
-  const v = $('video');
-  v.srcObject = null;
-  v.muted = true;
-  updateRender();
-  setSoundIcon(true);
-  $('sound').classList.add('hide');
-  $('stop').disabled = true;
+function onViewsChanged() {
   markActiveCamera();
+  const analysing = [...views.values()].some((v) => v.analyzing);
+  if (analysing) $('logCard').classList.remove('hide');
 }
 
-/*
- * Nothing but the Ukončit button ends the stream. Hiding the page used to tear
- * it down, but Safari reports the page hidden for things the user does not
- * think of as leaving - a download sheet, a share sheet, a locked screen - and
- * the stream would end under them. Coming back only revives a stream the
- * browser itself dropped.
- */
-function onPageVisible() {
-  if (!wantStream || !currentDevice) return;
-  if (!pc) {
-    reconnectAttempt = 0;
-    startStream(currentDevice.id, currentDevice.name, true);
-    return;
+function openCamera(device, { auto = false } = {}) {
+  const existing = views.get(device.id);
+  if (existing) {
+    if (!existing.wantStream) existing.retry();
+    if (!auto) existing.card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return existing;
   }
-  const v = $('video');
-  if (v.srcObject && v.paused) v.play().catch(() => {});
+  if (views.size >= MAX_VIEWS) {
+    if (!auto) showPlan(`Najednou jdou otevřít nejvýš ${MAX_VIEWS} kamery. Nejdřív některou ukončete.`, true);
+    return null;
+  }
+
+  const view = new CameraView(device, $('viewTpl'), {
+    api,
+    onLog: appendLog,
+    onRecording: addRecording,
+    onChange: onViewsChanged,
+    // Several cameras talking over each other is noise; one speaks at a time.
+    onSound: (loud) => { for (const v of views.values()) if (v !== loud) v.setMuted(true); },
+    onClose: (closed) => {
+      views.delete(closed.device.id);
+      closed.card.remove();
+      showPlan('');
+      onViewsChanged();
+    },
+  });
+  views.set(device.id, view);
+  $('streams').append(view.card);
+  view.start({ scroll: !auto });
+  onViewsChanged();
+  return view;
+}
+
+// Coming back to the tab only revives what the browser itself dropped; see
+// CameraView.onPageVisible for why hiding the page ends nothing.
+function onPageVisible() {
+  for (const v of views.values()) v.onPageVisible();
 }
 
 window.addEventListener('pageshow', onPageVisible);
@@ -727,106 +570,7 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') onPageVisible();
 });
 
-// Icon-only control, so the state has to reach assistive tech through the label.
-const SPEAKER_BODY = '<path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/>';
-const SPEAKER_ON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-  stroke-linecap="round" aria-hidden="true">${SPEAKER_BODY}
-  <path d="M16.5 8.8a4.5 4.5 0 010 6.4"/><path d="M19.2 6a8 8 0 010 12"/></svg>`;
-const SPEAKER_OFF = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-  stroke-linecap="round" aria-hidden="true">${SPEAKER_BODY}
-  <path d="M16.5 9.5l5 5"/><path d="M21.5 9.5l-5 5"/></svg>`;
-
-function setSoundIcon(muted) {
-  const label = muted ? 'Zapnout zvuk' : 'Ztlumit';
-  $('sound').innerHTML = muted ? SPEAKER_OFF : SPEAKER_ON;
-  $('sound').setAttribute('aria-label', label);
-  $('sound').title = label;
-}
-
-setSoundIcon(true);
-
-$('sound').onclick = () => {
-  const v = $('video');
-  v.muted = !v.muted;
-  if (!v.muted) v.play().catch(() => {});
-  setSoundIcon(v.muted);
-};
-
-$('stop').onclick = async (e) => {
-  if (e && e.isTrusted === false) return;   // never end the stream from script
-  stopAnalysis();
-  if (recording) stopRecording();
-  $('retry').classList.add('hide');
-  await teardown({ keepIntent: false });
-  setMsg('Stream ukončen.');
-};
-
-/* ---------- display mode ---------- */
-
-const canvas = $('canvas');
-const cctx = canvas.getContext('2d');
-const small = $('small');
-const sctx = small.getContext('2d');
-
-let displayMode = 'normal';
-let rafId = null;
-
-$('modes').querySelectorAll('button').forEach((b) => {
-  b.onclick = () => {
-    displayMode = b.dataset.mode;
-    $('modes').querySelectorAll('button').forEach((o) =>
-      o.setAttribute('aria-pressed', String(o === b)));
-    updateRender();
-  };
-});
-
-// The canvas pipeline costs CPU, so it only runs when the picture is actually
-// being altered, recorded or analysed; otherwise the raw video is cheaper and
-// keeps the native iOS controls.
-function needsCanvas() {
-  return displayMode !== 'normal' || analyzing || recording;
-}
-
-function updateRender() {
-  const on = needsCanvas() && $('video').srcObject;
-  // Only the canvas is toggled. The video stays rendered underneath, because a
-  // video that is not rendered can stop decoding - and then the picture we draw
-  // from, and the watchdog that checks it, both go stale.
-  canvas.classList.toggle('hide', !on);
-  if (on && rafId === null) rafId = requestAnimationFrame(renderLoop);
-  if (!on && rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
-}
-
-function fitCanvas() {
-  const v = $('video');
-  const w = v.videoWidth || 1280, h = v.videoHeight || 720;
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w; canvas.height = h;
-    // ~48px wide before upscaling, so the mosaic removes detail rather than softening it.
-    small.width = 48;
-    small.height = Math.max(24, Math.round(48 * h / w));
-  }
-}
-
-let lastFrameTime = -1;
-
-function renderLoop() {
-  rafId = null;
-  const v = $('video');
-  if (!v.srcObject || !needsCanvas()) { updateRender(); return; }
-
-  fitCanvas();
-  if (v.readyState >= 2 && v.currentTime !== lastFrameTime) {
-    lastFrameTime = v.currentTime;
-    drawBackground(cctx, canvas, v, displayMode, small, sctx);
-    if (analyzing) detectPose(v);
-  }
-  rafId = requestAnimationFrame(renderLoop);
-}
-
-/* ---------- recording ---------- */
-
-let recorder = null, recording = false, chunks = [], recStartedAt = 0, timerId = null;
+/* ---------- recordings ---------- */
 
 /*
  * Unattended runs produce several files, so each one gets its own row instead
@@ -990,12 +734,13 @@ async function writeToFolder(rec) {
   }
 }
 
-function addRecording(blob, device, from, to) {
+// zdroj ('plan' | 'rucne') is fixed by the camera when the recording starts.
+function addRecording({ blob, device, from, to, ext, zdroj }) {
   const url = URL.createObjectURL(blob);
   const stamp = from.toISOString().replace(/[:.]/g, '-');
   const safe = (device?.name || 'kamera').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '');
   const rec = { url, blob, device, from, to,
-                name: `famicura-${safe}-${stamp}.${recordExt}` };
+                name: `famicura-${safe}-${stamp}.${ext}` };
   recordings.unshift(rec);
 
   const li = document.createElement('li');
@@ -1012,6 +757,7 @@ function addRecording(blob, device, from, to) {
   a.href = url;
   a.download = rec.name;
   a.textContent = 'Uložit';
+  rec.link = a;
 
   const share = document.createElement('button');
   share.className = 'sec';
@@ -1037,8 +783,7 @@ function addRecording(blob, device, from, to) {
       typ: 'nahravka',
       od: from.toISOString(), do: to.toISOString(),
       kameraId: device?.id || null, kameraNazev: device?.name || null,
-      velikostB: blob.size, soubor: rec.name, slozka: folder,
-      zdroj: autoWindow ? 'plan' : 'rucne'
+      velikostB: blob.size, soubor: rec.name, slozka: folder, zdroj
     });
   });
 }
@@ -1047,114 +792,19 @@ async function shareRecording(rec) {
   const file = new File([rec.blob], rec.name, { type: rec.blob.type });
   try {
     if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Famicura Ring' });
-    else $('recordings').querySelector('a')?.click();
+    else rec.link.click();                  // this recording, not the newest one
   } catch (e) { /* the user dismissed the sheet */ }
 }
 
-function pickMime() {
-  const choices = [
-    ['video/mp4;codecs=avc1.42E01E', 'mp4'], ['video/mp4', 'mp4'],
-    ['video/webm;codecs=vp9', 'webm'], ['video/webm;codecs=vp8', 'webm'], ['video/webm', 'webm']
-  ];
-  for (const [mime, ext] of choices) {
-    if (window.MediaRecorder && MediaRecorder.isTypeSupported(mime)) return { mime, ext };
-  }
-  return { mime: '', ext: 'webm' };
-}
+/* ---------- analysis log ---------- */
 
-let recordExt = 'mp4';
-
-function startRecording() {
-  if (!canvas.captureStream || !window.MediaRecorder) {
-    $('streamMsg').innerHTML = '<span class="bad">Tento prohlížeč neumí nahrávat canvas.</span>';
-    return;
-  }
-  chunks = [];
-
-  // captureStream only produces frames from a canvas that is visible and being
-  // drawn, so switch the pipeline on before grabbing the stream.
-  recording = true;
-  updateRender();
-  fitCanvas();
-
-  const fmt = pickMime();
-  recordExt = fmt.ext;
-
-  // If anything here throws, `recording` must not stay true: the button would
-  // read as recording for ever and the scheduler would never start again.
-  let stream;
-  try {
-    stream = canvas.captureStream(30);
-    recorder = fmt.mime
-      ? new MediaRecorder(stream, { mimeType: fmt.mime, videoBitsPerSecond: 3500000 })
-      : new MediaRecorder(stream);
-  } catch (e) {
-    recorder = null;
-    recording = false;
-    autoWindow = null;
-    updateRender();
-    setMsg(`Nahrávání se nepodařilo spustit: ${e.message}`, true);
-    return;
-  }
-
-  recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-  const startedAt = new Date();
-  const forDevice = currentDevice;
-
-  recorder.onstop = () => {
-    const blob = new Blob(chunks, { type: recorder.mimeType || fmt.mime || 'video/mp4' });
-    addRecording(blob, forDevice, startedAt, new Date());
-    $('streamMsg').textContent = `Nahrávka hotova (${(blob.size / 1024 / 1024).toFixed(1)} MB).`;
-    recorder = null;
-    recording = false;
-    updateRender();
-  };
-
-  recStartedAt = Date.now();
-  try {
-    recorder.start(1000);
-  } catch (e) {
-    recorder = null;
-    recording = false;
-    autoWindow = null;
-    updateRender();
-    setMsg(`Nahrávání se nepodařilo spustit: ${e.message}`, true);
-    return;
-  }
-  tickTimer();
-  timerId = setInterval(tickTimer, 250);
-
-  $('record').textContent = '■ Zastavit nahrávání';
-  $('recBar').classList.remove('hide');
-  updateRender();
-}
-
-function tickTimer() {
-  $('timer').textContent = fmtTime((Date.now() - recStartedAt) / 1000);
-}
-
-function stopRecording() {
-  autoWindow = null;
-  if (recorder && recorder.state !== 'inactive') recorder.stop();
-  else { recorder = null; recording = false; updateRender(); }
-  clearInterval(timerId);
-  $('record').textContent = '● Nahrávat';
-  $('recBar').classList.add('hide');
-}
-
-$('record').onclick = () => (recording ? stopRecording() : startRecording());
-
-/* ---------- live analysis ---------- */
-
-let analyzing = false, landmarker = null, poseConnections = [], analysisStartedAt = 0;
-const analyzer = new LiveAnalyzer(appendLog);
-
+// One log for every camera; each line carries the camera it came from.
 // Kept beyond what the list shows, so an export can cover a whole shift.
 const logEntries = [];
 const MAX_LOG_ENTRIES = 5000;
 
 function appendLog(ev) {
-  const entry = { ...ev, at: ev.at || new Date(), device: ev.device || currentDevice };
+  const entry = { ...ev, at: ev.at || new Date() };
   logEntries.push(entry);
 
   clbSend({
@@ -1206,78 +856,19 @@ $('download').onclick = () => {
     `Staženo ${rows.length} záznamů` + (cams.size ? ` (${[...cams].join(', ')}).` : '.');
 };
 
-async function loadModel() {
-  if (landmarker) return;
-  $('streamMsg').textContent = 'Načítám model pro analýzu…';
-  const { PoseLandmarker, FilesetResolver } =
-    await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest');
-  const vision = await FilesetResolver.forVisionTasks(
-    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm');
-  landmarker = await PoseLandmarker.createFromOptions(vision, {
-    baseOptions: {
-      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
-      delegate: 'GPU'
-    },
-    runningMode: 'VIDEO', numPoses: 1,
-    minPoseDetectionConfidence: .55, minPosePresenceConfidence: .55, minTrackingConfidence: .55
-  });
-  poseConnections = PoseLandmarker.POSE_CONNECTIONS;
-}
-
-function detectPose(video) {
-  if (!landmarker) return;
-  let result;
-  try { result = landmarker.detectForVideo(video, performance.now()); }
-  catch { return; }
-
-  const t = (Date.now() - analysisStartedAt) / 1000;
-  const lm = result.landmarks?.[0] || null;
-  if (lm) drawSkeleton(cctx, canvas, lm, poseConnections);
-  analyzer.push(t, lm);
-}
-
-async function startAnalysis() {
-  $('analyze').disabled = true;
-  try {
-    await loadModel();
-  } catch (e) {
-    $('streamMsg').innerHTML = `<span class="bad">Model se nepodařilo načíst: ${esc(e.message)}</span>`;
-    $('analyze').disabled = false;
-    return;
-  }
-  analyzer.reset();
-  analysisStartedAt = Date.now();
-  analyzing = true;
-  $('analyze').textContent = 'Zastavit analýzu';
-  $('analyze').disabled = false;
-  $('logCard').classList.remove('hide');
-  $('streamMsg').textContent = 'Analýza běží.';
-  updateRender();
-}
-
-function stopAnalysis() {
-  if (!analyzing) return;
-  analyzing = false;
-  $('analyze').textContent = 'Spustit analýzu';
-  $('streamMsg').textContent = 'Analýza zastavena.';
-  updateRender();
-}
-
-$('analyze').onclick = () => (analyzing ? stopAnalysis() : startAnalysis());
-
 /* ---------- recording schedules ---------- */
 
 /*
  * Recording happens in this page, through MediaRecorder on the canvas. There
  * is no server-side recorder, so a schedule can only fire while the page is
- * open. The scheduler starts the stream for a due camera when nothing else is
- * playing, records for the window, and stops at its end.
+ * open. Each due camera is opened next to whatever is already playing -
+ * nothing the user is watching gets taken over - recorded for the window, and
+ * stopped at its end.
  */
 const SCHED_TICK_MS = 15000;
 
 let schedules = {};
 let schedFor = null;          // the camera whose schedule is being edited
-let autoWindow = null;        // the interval the scheduler is currently recording
 
 function schedRowValues() {
   return [...$('schedRows').querySelectorAll('.schedRow')].map((row) => ({
@@ -1349,46 +940,49 @@ async function loadSchedules() {
 async function schedulerTick() {
   markLiveRows();
 
-  const due = dueRecording(schedules, new Date());
+  const now = new Date();
+  const due = dueRecordings(schedules, now);
+  const open = new Set(due.map((d) => d.deviceId));
 
-  if (recording && autoWindow) {
-    const stillOpen = due && currentDevice && due.deviceId === currentDevice.id
-                      && isWithin(autoWindow, new Date());
-    if (!stillOpen) {
-      autoWindow = null;
-      stopRecording();
-      setMsg('Plánované nahrávání skončilo.');
+  // A scheduled recording ends with its window. One the user started by hand
+  // has no window and is theirs to stop.
+  for (const view of views.values()) {
+    if (view.recording && view.autoWindow
+        && (!open.has(view.device.id) || !isWithin(view.autoWindow, now))) {
+      view.stopRecording();
+      view.setMsg('Plánované nahrávání skončilo.');
     }
-    return;
   }
 
-  if (!due || recording) return;
+  const waiting = [];
+  for (const { deviceId, interval } of due) {
+    let view = views.get(deviceId);
 
-  // Nothing is streaming: bring up the camera the schedule asks for.
-  if (!currentDevice || !pc) {
-    const device = knownDevices.find((d) => d.id === due.deviceId);
-    if (!device) return;
-    autoWindow = due.interval;
-    setMsg(`Plán ${fmtInterval(due.interval)} – spouštím ${device.name}.`);
-    await startStream(device.id, device.name, false);
-    return;
+    if (!view) {
+      const device = knownDevices.find((d) => d.id === deviceId);
+      if (!device) continue;                  // the camera list is not loaded yet
+      view = openCamera(device, { auto: true });
+      if (!view) { waiting.push(device.name); continue; }
+      view.setMsg(`Plán ${fmtInterval(interval)} – spouštím kameru.`);
+      continue;                               // record once frames flow, on a later tick
+    }
+
+    if (view.recording) continue;            // already scheduled, or recording by hand
+    // Unattended recording is the point of a plan, so a camera that gave up
+    // reconnecting is tried again rather than left dark for the whole window.
+    if (!view.wantStream) { view.retry(); continue; }
+    if (!view.hasPicture()) {
+      view.setMsg(`Plán ${fmtInterval(interval)} – čekám na obraz z kamery.`);
+      continue;
+    }
+
+    view.startRecording(interval);
+    if (view.recording) view.setMsg(`Plánované nahrávání ${fmtInterval(interval)} běží.`);
   }
 
-  // Someone is watching another camera; never hijack that.
-  if (currentDevice.id !== due.deviceId) {
-    setMsg(`Plán čeká na kameru ${esc(knownDevices.find(d => d.id === due.deviceId)?.name || '')}.`);
-    return;
-  }
-
-  const v = $('video');
-  if (!v.srcObject || v.readyState < 2) {
-    setMsg(`Plán ${fmtInterval(due.interval)} – čekám na obraz z kamery.`);
-    return;
-  }
-
-  autoWindow = due.interval;
-  startRecording();
-  setMsg(`Plánované nahrávání ${fmtInterval(due.interval)} běží.`);
+  showPlan(waiting.length
+    ? `Plán čeká – najednou jdou otevřít nejvýš ${MAX_VIEWS} kamery. Čeká: ${waiting.join(', ')}.`
+    : '', waiting.length > 0);
 }
 
 setInterval(() => { schedulerTick().catch(() => {}); }, SCHED_TICK_MS);
