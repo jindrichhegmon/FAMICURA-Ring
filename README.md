@@ -171,3 +171,28 @@ export ale pracuje s celou historií.
 Pozn.: `.hide` má `!important`. Utility třída jinak prohrává s pravidlem
 stejné váhy definovaným později (`.seg`) i s pravidlem na id (`#saveLink`) -
 obojí by znamenalo, že se prvek vůbec neskryje.
+
+## v8 - stream končí jen na povel uživatele
+
+Hlášení: po nahrání a uložení videa se stream sám ukončil.
+
+Tři změny, všechny směrem k „stream skončí, až když ho ukončím":
+
+**Video se už nikdy neschovává přes `display:none`.** Dřív se při rozmazaném
+a černém režimu a při nahrávání video skrylo a ukázal se canvas. Jenže
+nevykreslované video může prohlížeč přestat dekódovat - a pak zamrzne obraz,
+ze kterého canvas kreslí, i `currentTime`, podle kterého hlídač pozná zamrznutí.
+Canvas se teď vykresluje **nad** videem (`z-index`), video zůstává celou dobu
+živé. Tohle je pravděpodobně i příčina dřívějšího náhodného zasekávání.
+
+**Skrytí stránky stream neukončí.** Safari hlásí stránku jako skrytou i při
+věcech, které uživatel za odchod nepovažuje - stahovací nebo sdílecí panel,
+zamčená obrazovka. Návrat na stránku už jen oživí spojení, které shodil sám
+prohlížeč. Cena: při odchodu zůstává Ring session otevřená.
+
+**Ukončit reaguje jen na skutečný klik** (`event.isTrusted`), takže stream
+nemůže ukončit žádný kód.
+
+Poznámka: v Chromiu se původní chyba nereprodukovala - při stažení souboru
+nepřišla žádná lifecycle událost a stream přežil. Příčina je tedy specifická
+pro Safari a opravy míří na mechanismy, které ji tam mohou způsobit.

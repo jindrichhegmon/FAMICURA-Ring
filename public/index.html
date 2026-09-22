@@ -90,6 +90,8 @@
 
   .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
   .stage > video, .stage > canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+  .stage > video{z-index:1}
+  .stage > #canvas{z-index:2}  /* covers the video; never hide the video itself */
   #small{display:none}
 
   .seg{display:flex;gap:0;border:1px solid #bcc8d1;border-radius:12px;overflow:hidden;width:100%}
@@ -583,25 +585,28 @@ async function teardown({ keepIntent }) {
   $('stop').disabled = true;
 }
 
-// Leaving the page should not keep a camera streaming; coming back should not
-// leave a dead player behind. iOS fires pagehide rather than unload.
-function onPageHidden() {
-  if (!wantStream || recording) return;   // never cut a recording short
-  teardown({ keepIntent: true });
-  setMsg('Pozastaveno – obnoví se po návratu.');
-}
-
+/*
+ * Nothing but the Ukončit button ends the stream. Hiding the page used to tear
+ * it down, but Safari reports the page hidden for things the user does not
+ * think of as leaving - a download sheet, a share sheet, a locked screen - and
+ * the stream would end under them. Coming back only revives a stream the
+ * browser itself dropped.
+ */
 function onPageVisible() {
-  if (wantStream && !pc && currentDevice) {
+  if (!wantStream || !currentDevice) return;
+  if (!pc) {
     reconnectAttempt = 0;
     startStream(currentDevice.id, currentDevice.name, true);
+    return;
   }
+  const v = $('video');
+  if (v.srcObject && v.paused) v.play().catch(() => {});
 }
 
-window.addEventListener('pagehide', onPageHidden);
 window.addEventListener('pageshow', onPageVisible);
-document.addEventListener('visibilitychange', () =>
-  (document.visibilityState === 'hidden' ? onPageHidden() : onPageVisible()));
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') onPageVisible();
+});
 
 // Icon-only control, so the state has to reach assistive tech through the label.
 const SPEAKER_BODY = '<path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/>';
@@ -628,7 +633,8 @@ $('sound').onclick = () => {
   setSoundIcon(v.muted);
 };
 
-$('stop').onclick = async () => {
+$('stop').onclick = async (e) => {
+  if (e && e.isTrusted === false) return;   // never end the stream from script
   stopAnalysis();
   if (recording) stopRecording();
   $('retry').classList.add('hide');
@@ -664,8 +670,10 @@ function needsCanvas() {
 
 function updateRender() {
   const on = needsCanvas() && $('video').srcObject;
+  // Only the canvas is toggled. The video stays rendered underneath, because a
+  // video that is not rendered can stop decoding - and then the picture we draw
+  // from, and the watchdog that checks it, both go stale.
   canvas.classList.toggle('hide', !on);
-  $('video').classList.toggle('hide', !!on);
   if (on && rafId === null) rafId = requestAnimationFrame(renderLoop);
   if (!on && rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
 }
