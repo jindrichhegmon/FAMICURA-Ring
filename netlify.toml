@@ -1,0 +1,32 @@
+[build]
+  publish = "public"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/link"
+  to = "/link.html"
+  status = 200
+
+[[redirects]]
+  from = "/api/token-exchange"
+  to = "/.netlify/functions/token-exchange"
+  status = 200
+[[redirects]]
+  from = "/api/link-claim"
+  to = "/.netlify/functions/link-claim"
+  status = 200
+[[redirects]]
+  from = "/api/webhook"
+  to = "/.netlify/functions/webhook"
+  status = 200
+[[redirects]]
+  from = "/api/devices"
+  to = "/.netlify/functions/devices"
+  status = 200
+[[redirects]]
+  from = "/api/status"
+  to = "/.netlify/functions/status"
+  status = 200
+
+[functions]
+  node_bundler = "esbuild"

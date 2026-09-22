@@ -1,0 +1,2 @@
+import {out,fresh,ring} from "./_ring.mjs";
+export const handler=async e=>{if(e.httpMethod!=="GET")return out(405,{ok:false,error:"GET required"});try{const rec=await fresh();if(!rec)return out(404,{ok:false,linked:false,error:"Ring účet není propojen"});const r=await ring("/v1/devices",rec.access_token),t=await r.text();if(!r.ok)return out(r.status,{ok:false,error:t});return out(200,{ok:true,data:JSON.parse(t)})}catch(err){return out(500,{ok:false,error:err.message})}};
