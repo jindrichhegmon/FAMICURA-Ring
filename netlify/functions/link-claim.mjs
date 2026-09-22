@@ -1,6 +1,8 @@
 import {
   env,
   getTokenRecords,
+  accountIdCandidates,
+  deleteTokenRecord,
   computeNonce,
   secureEqual,
   ringFetch,
@@ -48,25 +50,36 @@ export default async (req) => {
     // Ring calls our Token Exchange URL and redirects the browser in parallel,
     // so the unclaimed token can land a moment after this request starts.
     let matched = null;
+    let winner = null;
     let inspected = 0;
+    let tried = 0;
 
     for (let attempt = 1; attempt <= MATCH_ATTEMPTS && !matched; attempt++) {
       if (attempt > 1) await sleep(MATCH_DELAY_MS);
 
       const records = (await getTokenRecords()).filter((r) => r.status === "unclaimed");
       inspected = records.length;
+      tried = 0;
 
       for (const record of records) {
-        if (secureEqual(computeNonce(String(time), record.account_id), nonce)) {
-          matched = record;
-          break;
+        // /v1/users/me can expose the account id under several fields and only
+        // one of them is what Ring hashed, so try each candidate.
+        for (const candidate of accountIdCandidates(record)) {
+          tried++;
+          if (secureEqual(computeNonce(String(time), candidate.id), nonce)) {
+            matched = record;
+            winner = candidate;
+            break;
+          }
         }
+        if (matched) break;
       }
     }
 
     if (!matched) {
       await putDiag("link-no-match", {
         unclaimed_inspected: inspected,
+        candidates_tried: tried,
         attempts: MATCH_ATTEMPTS,
         time
       });
@@ -74,7 +87,7 @@ export default async (req) => {
         ok:false,
         error: inspected === 0
           ? "Ring zatím nedoručil žádný nevyzvednutý token (Token Exchange URL neproběhlo). Zkuste Connect znovu."
-          : `Nonce neodpovídá žádnému z ${inspected} nevyzvednutých tokenů. Zkontrolujte RING_HMAC_KEY a account_id.`
+          : `Nonce neodpovídá žádnému z ${tried} account_id ve ${inspected} nevyzvednutých tokenech. Zkontrolujte RING_HMAC_KEY.`
       }, 404);
     }
 
@@ -106,13 +119,24 @@ export default async (req) => {
       return json({ ok:false, error:`Ring PATCH app-integrations selhal (${patchRes.status}).` }, 502);
     }
 
+    // If a non-primary candidate won, that one is the real account id: adopt it
+    // and move the record to its key.
+    const previousId = matched.account_id;
+    matched.account_id = winner.id;
+    matched.account_id_source = winner.source;
     matched.status = "linked";
     matched.partner_identifier = accountIdentifier;
     matched.linked_at = new Date().toISOString();
     matched.updated_at = matched.linked_at;
 
     await putTokenRecord(matched);
-    await putDiag("link-ok", { account_id: matched.account_id });
+    if (previousId !== matched.account_id) await deleteTokenRecord(previousId);
+
+    await putDiag("link-ok", {
+      account_id: matched.account_id,
+      account_id_source: winner.source,
+      reassigned_from: previousId !== matched.account_id ? previousId : null
+    });
 
     // Carry the user straight into the dashboard without a second password prompt.
     return json(

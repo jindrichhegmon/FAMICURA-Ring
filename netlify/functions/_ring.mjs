@@ -203,6 +203,23 @@ export async function putTokenRecord(record) {
   await tokensStore().setJSON(`token-${record.account_id}`, record);
 }
 
+export async function deleteTokenRecord(accountId) {
+  try {
+    await tokensStore().delete(`token-${accountId}`);
+  } catch (error) {
+    console.error("Unable to delete token record", accountId, error);
+  }
+}
+
+// Every id /v1/users/me offered, so nonce matching can try them all instead of
+// betting on one field.
+export function accountIdCandidates(record) {
+  if (Array.isArray(record.account_id_candidates) && record.account_id_candidates.length) {
+    return record.account_id_candidates;
+  }
+  return [{ source: record.account_id_source || "account_id", id: record.account_id }];
+}
+
 export async function getLinkedRecord() {
   const records = await getTokenRecords();
   return records

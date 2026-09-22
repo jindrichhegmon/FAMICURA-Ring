@@ -35,6 +35,11 @@ export default async (req) => {
     const tokens = await exchangeAuthorizationCode(code);
     const { accountId, source, candidates } = await getRingMe(tokens.access_token);
 
+    const candidateList = Object.entries(candidates)
+      .filter(([, id]) => id)
+      .map(([candidateSource, id]) => ({ source: candidateSource, id: String(id) }))
+      .filter((c, i, all) => all.findIndex((o) => o.id === c.id) === i);
+
     // Which field the account_id came from decides whether nonce matching can
     // ever succeed, so record it.
     await putDiag("exchange-ok", {
@@ -48,6 +53,7 @@ export default async (req) => {
     await putTokenRecord({
       account_id: accountId,
       account_id_source: source,
+      account_id_candidates: candidateList,
       access_token: tokens.access_token,
       refresh_token: tokens.refresh_token,
       token_type: tokens.token_type || "Bearer",

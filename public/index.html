@@ -105,6 +105,14 @@ function renderDiag(s) {
   if (s.linked_at) rows.push(['Propojeno', new Date(s.linked_at).toLocaleString('cs-CZ')]);
   if (s.token_expires_at) rows.push(['Token platný do', new Date(s.token_expires_at).toLocaleString('cs-CZ')]);
   rows.push(['Nevyzvednuté tokeny', String(s.unclaimed_tokens ?? '–')]);
+  for (const t of s.tokens || []) {
+    rows.push([
+      `Token <span class="muted">${esc(t.status)}</span>`,
+      `<code>${esc(String(t.account_id).slice(0, 34))}…</code><br>`
+      + `<span class="muted">${esc(t.account_id_source || '?')} · ${t.candidates} kandidát(ů)`
+      + `${t.expired ? ' · <span class="bad">vypršel</span>' : ''}</span>`
+    ]);
+  }
   rows.push(['Netlify Blobs', s.blobs === 'reachable' ? '<span class="ok">dostupné</span>' : '<span class="bad">nedostupné</span>']);
 
   const missing = s.missing || [];
