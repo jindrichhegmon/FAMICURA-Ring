@@ -290,7 +290,7 @@ jen dva tvary řádku.
 Poprvé na VPS vytvořit `/opt/famicura-ring/.env` podle `.env.example` a přidat
 blok z `deploy/Caddyfile.snippet` do `/etc/caddy/Caddyfile`.
 
-Běží jako `famicura-ring` v PM2 pod uživatelem `jhnapps`, port **3101** za Caddy.
+Běží jako `famicura-ring` v PM2 pod uživatelem `jhnapps`, port **3111** za Caddy.
 Stav: `curl -s https://famicuraring.95-216-201-2.sslip.io/api/health`
 
 ### Složka pro videa

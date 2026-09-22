@@ -60,6 +60,6 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-const port = Number(process.env.PORT || 3101);
+const port = Number(process.env.PORT || 3111);
 const host = process.env.HOST || '127.0.0.1';
 server.listen(port, host, () => console.log(`Famicura Ring – SQL běží na http://${host}:${port}  (CLB1 ${process.env.SQL_SERVER || '?'})`));
