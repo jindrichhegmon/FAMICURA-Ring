@@ -157,3 +157,17 @@ Typ, Závažnost, Popis. Název souboru obsahuje zvolené období.
 
 V paměti se drží až 5000 záznamů, seznam na stránce zobrazuje posledních 200 -
 export ale pracuje s celou historií.
+
+## v7 - seznam nebo dlaždice, barvy a ikony
+
+- Kamery lze zobrazit jako **seznam** nebo **dlaždice**. Obě zobrazení sdílejí
+  stejné HTML, liší se jen třída kontejneru. Volba se pamatuje v `localStorage`
+  tohoto prohlížeče (čtení i zápis v try/catch - v anonymním okně může selhat).
+- **Živý obraz** je zelené, **Ukončit** červené a přesunuté dolů do lišty
+  s tlačítky Uložit video a Sdílet.
+- **Zvuk** je ikona reproduktoru, která přepíná mezi ztlumeno a zapnuto;
+  stav nese `aria-label` a `title`, protože tlačítko nemá text.
+
+Pozn.: `.hide` má `!important`. Utility třída jinak prohrává s pravidlem
+stejné váhy definovaným později (`.seg`) i s pravidlem na id (`#saveLink`) -
+obojí by znamenalo, že se prvek vůbec neskryje.

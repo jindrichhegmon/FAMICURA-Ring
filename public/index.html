@@ -39,7 +39,6 @@
     background:#106fd5;color:#fff;font-weight:700;font-size:1rem;
     cursor:pointer;touch-action:manipulation;
   }
-  button:disabled{background:#9db4cc}
   button.sec{background:#e6ecf2;color:#17212b}
   button.wide{width:100%}
 
@@ -72,11 +71,22 @@
   .kv > span:first-child{color:#5a6b7d}
   .kv > span:last-child{text-align:right;min-width:0;overflow-wrap:anywhere}
 
-  .dev{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;
-       padding:12px 0;border-bottom:1px solid #eef2f6}
-  .dev:last-child{border-bottom:0}
-  .dev .meta{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
-  .hide{display:none}
+  .dev .meta{min-width:0;overflow-wrap:anywhere}
+
+  /* list: one row per camera */
+  #devices.list .dev{display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+                     justify-content:space-between;padding:12px 0;border-bottom:1px solid #eef2f6}
+  #devices.list .dev:last-child{border-bottom:0}
+  #devices.list .dev .meta{flex:1 1 200px}
+
+  /* tiles: cards that reflow to one column on the narrowest phones */
+  #devices.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  #devices.tiles .dev{display:flex;flex-direction:column;gap:10px;justify-content:space-between;
+                      border:1px solid #dde4ea;border-radius:12px;padding:12px}
+  #devices.tiles .dev button{width:100%}
+  /* A utility class has to beat both later rules of equal weight (.seg) and
+     id rules (#saveLink), so it carries the flag. */
+  .hide{display:none !important}
 
   .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
   .stage > video, .stage > canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
@@ -89,6 +99,12 @@
   .seg button[aria-pressed="true"]{background:#106fd5;color:#fff;font-weight:700}
 
   button.rec{background:#d92727}
+  button.go{background:#107a3d}
+  button.danger{background:#c62828}
+  button.icon{padding:0;width:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}
+  button.icon svg{width:22px;height:22px}
+  /* last, so it wins over every colour variant above */
+  button:disabled{background:#9db4cc;color:#fff}
   #saveLink{display:inline-block;background:#106fd5;color:#fff;font-weight:700;
             border-radius:12px;padding:12px 18px;min-height:44px;text-decoration:none;line-height:20px}
   #log{margin:0;list-style:none;padding:0;max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch}
@@ -109,7 +125,7 @@
 
   @media (max-width:640px){
     .kv > span:last-child{text-align:left;flex-basis:100%}
-    .dev button{width:100%}
+    #devices.list .dev button{width:100%}
     .c{padding:16px}
   }
 </style>
@@ -133,7 +149,13 @@
     <div class="c">
       <h2>Kamery</h2>
       <button id="loadDevices" class="wide">Načíst zařízení</button>
-      <div id="devices" class="muted" style="margin-top:12px">Zatím nenačteno.</div>
+
+      <div class="seg hide" id="views" style="margin-top:12px">
+        <button data-view="list" aria-pressed="true">Seznam</button>
+        <button data-view="tiles" aria-pressed="false">Dlaždice</button>
+      </div>
+
+      <div id="devices" class="muted list" style="margin-top:12px">Zatím nenačteno.</div>
     </div>
 
     <div class="c hide" id="streamCard">
@@ -155,17 +177,19 @@
       <div class="row" style="margin-top:12px">
         <button id="record" class="rec">● Nahrávat</button>
         <button id="analyze">Spustit analýzu</button>
-        <button id="sound" class="sec hide">Zapnout zvuk</button>
+        <button id="sound" class="sec icon hide" type="button"
+                aria-label="Zapnout zvuk" title="Zapnout zvuk"></button>
         <button id="retry" class="hide">Připojit znovu</button>
-        <button id="stop" class="sec" disabled>Ukončit</button>
       </div>
 
       <div class="row hide" id="recBar" style="margin-top:10px">
         <span class="muted">Nahrávám <span id="timer">00:00</span></span>
       </div>
-      <div class="row hide" id="saveBar" style="margin-top:10px">
-        <a id="saveLink" download>Uložit video</a>
-        <button id="shareBtn" class="sec">Sdílet</button>
+
+      <div class="row" id="actionBar" style="margin-top:10px">
+        <a id="saveLink" class="hide" download>Uložit video</a>
+        <button id="shareBtn" class="sec hide">Sdílet</button>
+        <button id="stop" class="danger" disabled>Ukončit</button>
       </div>
 
       <p id="streamMsg" class="muted" style="margin:10px 0 0"></p>
@@ -306,29 +330,56 @@ $('loginForm').onsubmit = async (e) => {
 
 /* ---------- devices ---------- */
 
+// List or tiles is a per-viewer preference, so it lives in this browser only
+// and must survive a storage that refuses to answer.
+const VIEW_KEY = 'famicura.deviceView';
+
+function loadView() {
+  try { return localStorage.getItem(VIEW_KEY) === 'tiles' ? 'tiles' : 'list'; }
+  catch { return 'list'; }
+}
+
+function applyView(view) {
+  $('devices').classList.toggle('tiles', view === 'tiles');
+  $('devices').classList.toggle('list', view !== 'tiles');
+  $('views').querySelectorAll('button').forEach((b) =>
+    b.setAttribute('aria-pressed', String(b.dataset.view === view)));
+  try { localStorage.setItem(VIEW_KEY, view); } catch { /* private mode */ }
+}
+
+$('views').querySelectorAll('button').forEach((b) => {
+  b.onclick = () => applyView(b.dataset.view);
+});
+
+applyView(loadView());
+
 $('loadDevices').onclick = async () => {
   $('devices').textContent = 'Načítám…';
   const { res, body } = await api('/api/devices');
 
   if (!res.ok) {
     $('devices').innerHTML = `<span class="bad">${esc(body.error || res.status)}</span>`;
+    $('views').classList.add('hide');
     return;
   }
   if (!body.devices || !body.devices.length) {
     $('devices').textContent = 'Ring nevrátil žádné zařízení.';
+    $('views').classList.add('hide');
     return;
   }
 
+  // Same markup for both views; the layout is the container's class.
   $('devices').innerHTML = body.devices.map((d) => `
     <div class="dev">
       <div class="meta">
         <strong>${esc(d.name)}</strong><br>
         <span class="muted">${d.kind ? esc(d.kind) + ' · ' : ''}${d.online === false ? 'offline · ' : ''}<code title="${esc(d.id)}">${esc(shortId(d.id))}</code></span>
       </div>
-      <button data-id="${esc(d.id)}" data-name="${esc(d.name)}">Živý obraz</button>
+      <button class="go" data-id="${esc(d.id)}" data-name="${esc(d.name)}">Živý obraz</button>
     </div>`).join('');
 
-  $('devices').querySelectorAll('button').forEach((b) => {
+  $('views').classList.remove('hide');
+  $('devices').querySelectorAll('.dev button').forEach((b) => {
     b.onclick = () => startStream(b.dataset.id, b.dataset.name);
   });
 };
@@ -527,7 +578,7 @@ async function teardown({ keepIntent }) {
   v.srcObject = null;
   v.muted = true;
   updateRender();
-  $('sound').textContent = 'Zapnout zvuk';
+  setSoundIcon(true);
   $('sound').classList.add('hide');
   $('stop').disabled = true;
 }
@@ -552,11 +603,29 @@ window.addEventListener('pageshow', onPageVisible);
 document.addEventListener('visibilitychange', () =>
   (document.visibilityState === 'hidden' ? onPageHidden() : onPageVisible()));
 
+// Icon-only control, so the state has to reach assistive tech through the label.
+const SPEAKER_BODY = '<path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/>';
+const SPEAKER_ON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+  stroke-linecap="round" aria-hidden="true">${SPEAKER_BODY}
+  <path d="M16.5 8.8a4.5 4.5 0 010 6.4"/><path d="M19.2 6a8 8 0 010 12"/></svg>`;
+const SPEAKER_OFF = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+  stroke-linecap="round" aria-hidden="true">${SPEAKER_BODY}
+  <path d="M16.5 9.5l5 5"/><path d="M21.5 9.5l-5 5"/></svg>`;
+
+function setSoundIcon(muted) {
+  const label = muted ? 'Zapnout zvuk' : 'Ztlumit';
+  $('sound').innerHTML = muted ? SPEAKER_OFF : SPEAKER_ON;
+  $('sound').setAttribute('aria-label', label);
+  $('sound').title = label;
+}
+
+setSoundIcon(true);
+
 $('sound').onclick = () => {
   const v = $('video');
   v.muted = !v.muted;
   if (!v.muted) v.play().catch(() => {});
-  $('sound').textContent = v.muted ? 'Zapnout zvuk' : 'Ztlumit';
+  setSoundIcon(v.muted);
 };
 
 $('stop').onclick = async () => {
@@ -652,7 +721,8 @@ function startRecording() {
   }
   if (recordedURL) { URL.revokeObjectURL(recordedURL); recordedURL = null; }
   chunks = [];
-  $('saveBar').classList.add('hide');
+  $('saveLink').classList.add('hide');
+  $('shareBtn').classList.add('hide');
 
   // captureStream only produces frames from a canvas that is visible and being
   // drawn, so switch the pipeline on before grabbing the stream.
@@ -675,7 +745,8 @@ function startRecording() {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
     $('saveLink').href = recordedURL;
     $('saveLink').download = `famicura-ring-${stamp}.${recordExt}`;
-    $('saveBar').classList.remove('hide');
+    $('saveLink').classList.remove('hide');
+    $('shareBtn').classList.remove('hide');
     $('streamMsg').textContent = `Nahrávka hotova (${(blob.size / 1024 / 1024).toFixed(1)} MB).`;
     recorder = null;
     recording = false;
