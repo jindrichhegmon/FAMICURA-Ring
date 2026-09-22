@@ -252,3 +252,39 @@ Karta kamery, ze které právě běží obraz, je orámovaná zeleně a nese odz
 *živě*. Rámeček je `outline`, protože řádky v seznamu vlastní okraj nemají -
 takto je vidět v seznamu i v dlaždicích. Označení se přesune při přepnutí
 kamery a zmizí s ukončením streamu.
+
+## v13 - CLB1 a složka na Google Disku
+
+### Co kam teče
+
+- **Log analýzy** (pády, dlouhé ležení, změny polohy) → `dbo.FamicuraRingLog`
+- **Metadata nahrávek** včetně názvu souboru a složky → `dbo.FamicuraRingNahravky`
+- **Video** → složka, kterou vyberete; Google Disk ji odsynchronizuje nahoru
+
+DDL obou tabulek je v `sql/clb1.sql`, popis scénáře v `sql/make-scenario.md`.
+
+### Zápis do CLB1
+
+Stránka posílá řádky na `/api/clb`. Funkce z nich **sama skládá SQL** a teprve
+ten předá webhooku v make.com; prohlížeč webhook URL nikdy nevidí.
+
+Modul MSSQL v make.com hodnoty neparametrizuje, jen je vkládá do textu dotazu.
+Proto se escapuje tady (`netlify/functions/_clb.mjs`): každá hodnota je
+řetězcový literál se zdvojenými apostrofy, čísla se ověřují, názvy tabulek jsou
+konstanty. Testuje se na kostře příkazu po odstranění literálů - pokus o injekci
+se musí celý scvrknout na jeden literál.
+
+Řádky se řadí do fronty a odesílají po jednom. Neúspěch (výpadek sítě) zůstává
+ve frontě a zkouší se znovu, odmítnutý řádek (400) se zahodí. Bez nastavené
+`CLB_WEBHOOK_URL` funkce vrací 503 a stránka to jednou oznámí.
+
+Proměnné v Netlify: `CLB_WEBHOOK_URL`, volitelně `CLB_WEBHOOK_SECRET`.
+
+### Složka pro videa
+
+Stránka nemůže dostat absolutní cestu - jedinou možností je File System Access
+API, kde složku jednou vyberete v dialogu. Handle se ukládá do IndexedDB, takže
+volba přežije obnovení stránky; nová relace si může vyžádat potvrzení.
+
+**Funguje v Chrome a Edge na počítači. Safari to neumí, na Macu ani na iPhonu** -
+tam karta nahrávek zůstane u stahování a řekne to.

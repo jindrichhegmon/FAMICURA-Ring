@@ -40,6 +40,10 @@
   to = "/.netlify/functions/events"
   status = 200
 [[redirects]]
+  from = "/api/clb"
+  to = "/.netlify/functions/clb"
+  status = 200
+[[redirects]]
   from = "/api/schedules"
   to = "/.netlify/functions/schedules"
   status = 200

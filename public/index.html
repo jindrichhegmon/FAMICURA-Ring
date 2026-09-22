@@ -145,7 +145,9 @@
   .schedRow input[type=checkbox]{width:22px;height:22px;min-height:22px;margin:0}
   .schedRow.live{background:#eef7f0;border-radius:10px;padding-left:8px;padding-right:8px}
 
+  #folderBox{border-bottom:1px solid #eef2f6;padding-bottom:12px}
   #recordings{list-style:none;margin:0;padding:0}
+  #recordings .saved{color:#0b5c2e;font-size:.8rem;font-weight:700}
   #recordings li{display:flex;flex-wrap:wrap;gap:8px 10px;align-items:center;
                  justify-content:space-between;padding:12px 0;border-bottom:1px solid #eef2f6}
   #recordings li:last-child{border-bottom:0}
@@ -208,12 +210,20 @@
       <p id="schedMsg" class="muted" style="margin:10px 0 0"></p>
     </div>
 
-    <div class="c hide" id="recCard">
+    <div class="c" id="recCard">
       <h2>Nahrávky</h2>
-      <p class="muted" style="margin:0 0 12px">
-        Zůstávají jen do zavření stránky – co chcete zachovat, uložte.
-      </p>
-      <ul id="recordings"></ul>
+
+      <div id="folderBox">
+        <p class="muted" style="margin:0 0 10px" id="folderMsg"></p>
+        <div class="row">
+          <button id="pickFolder" class="sec">Vybrat složku pro videa</button>
+          <button id="forgetFolder" class="sec hide">Zapomenout složku</button>
+        </div>
+      </div>
+
+      <p id="clbMsg" class="muted" style="margin:10px 0 0"></p>
+      <ul id="recordings" style="margin-top:14px"></ul>
+      <p id="recEmpty" class="muted" style="margin:12px 0 0">Zatím žádná nahrávka.</p>
     </div>
 
     <div class="c hide" id="streamCard">
@@ -289,6 +299,8 @@ import { LiveAnalyzer, fmtTime, fmtClock, drawBackground, drawSkeleton, createLo
          boundFrom, filterLog, logToCsv, csvFilename } from '/analyzer.js';
 import { MAX_INTERVALS, isWithin, activeInterval, dueRecording, fmtInterval,
          collectIntervals } from '/schedule.js';
+import { isSupported as folderSupported, pickFolder, loadHandle, saveHandle,
+         forgetHandle, ensurePermission, writeFile } from '/folder.js';
 
 const $ = (id) => document.getElementById(id);
 const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
@@ -392,6 +404,7 @@ async function refreshStatus() {
   $('app').classList.remove('hide');
   renderDiag(body);
   loadSchedules();
+  initFolder().catch(() => {});
 }
 
 $('loginForm').onsubmit = async (e) => {
@@ -821,6 +834,135 @@ let recorder = null, recording = false, chunks = [], recStartedAt = 0, timerId =
  */
 const recordings = [];
 
+/* ---------- CLB1 ---------- */
+
+/*
+ * Rows are queued and flushed one at a time. A row that fails stays at the
+ * front and is retried, so a momentary outage does not lose a fall record;
+ * a rejected row (400) is dropped, because retrying it would never succeed.
+ */
+const CLB_FLUSH_MS = 5000;
+const CLB_MAX_QUEUE = 500;
+
+const clbQueue = [];
+let clbFlushing = false;
+let clbState = 'unknown';     // unknown | ok | off | error
+
+function clbSend(row) {
+  clbQueue.push(row);
+  while (clbQueue.length > CLB_MAX_QUEUE) clbQueue.shift();
+}
+
+async function clbFlush() {
+  if (clbFlushing || !clbQueue.length || clbState === 'off') return;
+  clbFlushing = true;
+  try {
+    while (clbQueue.length) {
+      const row = clbQueue[0];
+      const { res, body } = await api('/api/clb', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(row)
+      });
+
+      if (res.ok) { clbQueue.shift(); clbState = 'ok'; continue; }
+
+      if (res.status === 503) {                 // not configured yet
+        clbState = 'off';
+        showClb('Zápis do CLB1 není nastavený (chybí CLB_WEBHOOK_URL).', true);
+        return;
+      }
+      if (res.status === 400) {                 // malformed: retrying cannot help
+        clbQueue.shift();
+        console.error('clb row rejected', body.error);
+        continue;
+      }
+      clbState = 'error';                       // transient: keep it and try later
+      showClb(`Zápis do CLB1 se nedaří (${body.error || res.status}), zkouším dál.`, true);
+      return;
+    }
+    if (clbState === 'ok') showClb('');
+  } finally {
+    clbFlushing = false;
+  }
+}
+
+function showClb(text, bad) {
+  const el = $('clbMsg');
+  if (!el) return;
+  el.innerHTML = text ? (bad ? `<span class="bad">${esc(text)}</span>` : esc(text)) : '';
+}
+
+setInterval(() => { clbFlush().catch(() => {}); }, CLB_FLUSH_MS);
+
+/* ---------- writing into the Google Drive folder ---------- */
+
+let folderHandle = null;
+
+function folderName() {
+  return folderHandle?.name || null;
+}
+
+function showFolder(text, bad) {
+  $('folderMsg').innerHTML = bad ? `<span class="bad">${esc(text)}</span>` : esc(text);
+}
+
+async function initFolder() {
+  if (!folderSupported()) {
+    $('pickFolder').classList.add('hide');
+    showFolder('Tento prohlížeč neumí zapisovat do složky. Videa zůstanou ke stažení '
+             + 'v seznamu níže. Přímý zápis do složky na Disku umí Chrome nebo Edge na počítači.');
+    return;
+  }
+
+  folderHandle = await loadHandle();
+  if (!folderHandle) {
+    showFolder('Videa se zatím jen nabízejí ke stažení. Vyberte složku a budou se do ní ukládat sama.');
+    return;
+  }
+
+  $('forgetFolder').classList.remove('hide');
+  // A new session needs a gesture before the browser re-grants access.
+  const granted = await ensurePermission(folderHandle, false);
+  showFolder(granted
+    ? `Videa se ukládají do složky ${folderHandle.name}.`
+    : `Složka ${folderHandle.name} čeká na potvrzení – klepněte na Vybrat složku.`, !granted);
+}
+
+$('pickFolder').onclick = async () => {
+  try {
+    // An existing handle only needs the permission renewing, not re-picking.
+    if (folderHandle && await ensurePermission(folderHandle, true)) {
+      showFolder(`Videa se ukládají do složky ${folderHandle.name}.`);
+      return;
+    }
+    folderHandle = await pickFolder();
+    $('forgetFolder').classList.remove('hide');
+    showFolder(`Videa se ukládají do složky ${folderHandle.name}.`);
+  } catch (e) {
+    if (e.name !== 'AbortError') showFolder(`Složku se nepodařilo použít: ${e.message}`, true);
+  }
+};
+
+$('forgetFolder').onclick = async () => {
+  await forgetHandle();
+  folderHandle = null;
+  $('forgetFolder').classList.add('hide');
+  showFolder('Složka zapomenuta. Videa zůstanou jen ke stažení.');
+};
+
+async function writeToFolder(rec) {
+  if (!folderHandle) return null;
+  if (!await ensurePermission(folderHandle, false)) return null;
+  try {
+    await writeFile(folderHandle, rec.name, rec.blob);
+    return folderHandle.name;
+  } catch (e) {
+    showFolder(`Zápis do složky selhal: ${e.message}`, true);
+    return null;
+  }
+}
+
 function addRecording(blob, device, from, to) {
   const url = URL.createObjectURL(blob);
   const stamp = from.toISOString().replace(/[:.]/g, '-');
@@ -849,13 +991,29 @@ function addRecording(blob, device, from, to) {
   share.textContent = 'Sdílet';
   share.onclick = () => shareRecording(rec);
 
+  const saved = document.createElement('span');
+  saved.className = 'saved';
+
   const actions = document.createElement('div');
   actions.className = 'row';
   actions.append(a, share);
+  what.append(saved);
   li.append(what, actions);
 
   $('recordings').prepend(li);
-  $('recCard').classList.remove('hide');
+  $('recEmpty').classList.add('hide');
+
+  // Put it in the folder, then tell CLB1 where it went.
+  writeToFolder(rec).then((folder) => {
+    if (folder) saved.textContent = `uloženo do ${folder}`;
+    clbSend({
+      typ: 'nahravka',
+      od: from.toISOString(), do: to.toISOString(),
+      kameraId: device?.id || null, kameraNazev: device?.name || null,
+      velikostB: blob.size, soubor: rec.name, slozka: folder,
+      zdroj: autoWindow ? 'plan' : 'rucne'
+    });
+  });
 }
 
 async function shareRecording(rec) {
@@ -971,6 +1129,18 @@ const MAX_LOG_ENTRIES = 5000;
 function appendLog(ev) {
   const entry = { ...ev, at: ev.at || new Date(), device: ev.device || currentDevice };
   logEntries.push(entry);
+
+  clbSend({
+    typ: 'udalost',
+    cas: entry.at.toISOString(),
+    kameraId: entry.device?.id || null,
+    kameraNazev: entry.device?.name || null,
+    druh: entry.kind || null,
+    zavaznost: entry.level === 'warn' ? 'varovani' : 'info',
+    popis: entry.text,
+    odZacatkuS: Math.round(entry.t || 0)
+  });
+
   if (logEntries.length > MAX_LOG_ENTRIES) logEntries.shift();
 
   $('logEmpty').classList.add('hide');
