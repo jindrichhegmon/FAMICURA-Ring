@@ -1,19 +1,182 @@
 import crypto from "node:crypto";
 import { getStore } from "@netlify/blobs";
-export const API="https://api.amazonvision.com";
-const OAUTH="https://oauth.ring.com/oauth/token";
-export const env=(n,req=true)=>{const v=process.env[n];if(req&&!v)throw new Error(`Missing env ${n}`);return v||""};
-export const out=(s,b)=>({statusCode:s,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"},body:JSON.stringify(b)});
-export const safe=(a,b)=>{const x=Buffer.from(String(a||"")),y=Buffer.from(String(b||""));return x.length===y.length&&crypto.timingSafeEqual(x,y)};
-export const nonce=(time,account)=>crypto.createHmac("sha256",env("RING_HMAC_KEY")).update(`${time}:${account}`).digest("base64url");
-export const verifyHook=(raw,sig)=>{if(!sig)return false;const got=String(sig).replace(/^sha256=/i,"");const exp=crypto.createHmac("sha256",env("RING_HMAC_KEY")).update(Buffer.from(raw||"","utf8")).digest("hex");return safe(exp,got)};
-export const ring=async(path,token,opt={})=>{const h=new Headers(opt.headers||{});h.set("authorization",`Bearer ${token}`);if(opt.body&&!h.has("content-type"))h.set("content-type","application/json");return fetch(API+path,{...opt,headers:h})};
-export async function exchangeCode(code){const r=await fetch(OAUTH,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"authorization_code",code,client_id:env("RING_CLIENT_ID"),client_secret:env("RING_CLIENT_SECRET")})});const t=await r.text();let j;try{j=JSON.parse(t)}catch{j={raw:t}}if(!r.ok)throw new Error(`Ring token exchange ${r.status}: ${t}`);return j}
-export async function refresh(rec){const r=await fetch(OAUTH,{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"refresh_token",refresh_token:rec.refresh_token,client_id:env("RING_CLIENT_ID"),client_secret:env("RING_CLIENT_SECRET")})});const t=await r.text();if(!r.ok)throw new Error(`Ring refresh ${r.status}: ${t}`);const j=JSON.parse(t),now=Date.now();return {...rec,access_token:j.access_token,refresh_token:j.refresh_token||rec.refresh_token,expires_at:now+(j.expires_in||14400)*1000,updated_at:new Date(now).toISOString()}}
-export async function me(token){const r=await ring("/v1/users/me",token);const t=await r.text();if(!r.ok)throw new Error(`/v1/users/me ${r.status}: ${t}`);const j=JSON.parse(t);const id=j?.meta?.account_id||j?.data?.attributes?.account_id||j?.data?.relationships?.account?.data?.id||j?.data?.id||j?.account_id||j?.id;if(!id)throw new Error("Account ID not found in /v1/users/me");return id}
-export const store=()=>getStore("ring-tokens");
-export async function records(){const s=store(),l=await s.list({prefix:"token-"}),a=[];for(const b of l.blobs||[]){try{const r=await s.get(b.key,{type:"json"});if(r)a.push(r)}catch{}}return a}
-export async function save(r){await store().setJSON(`token-${r.account_id}`,r)}
-export async function linked(){return (await records()).filter(x=>x.status==="linked").sort((a,b)=>String(b.updated_at||b.created_at).localeCompare(String(a.updated_at||a.created_at)))[0]||null}
-export async function fresh(){let r=await linked();if(!r)return null;if(!r.expires_at||Date.now()>r.expires_at-300000){r=await refresh(r);await save(r)}return r}
-export const mask=e=>{const [n="u",d="famicura.local"]=String(e||"user@famicura.local").split("@");return `${n[0]||"u"}***${n.length>1?n[n.length-1]:""}@${d}`};
+
+export const RING_API = "https://api.amazonvision.com";
+export const RING_OAUTH = "https://oauth.ring.com/oauth/token";
+
+export function env(name, required = true) {
+  const value = process.env[name];
+  if (required && !value) throw new Error(`Missing environment variable: ${name}`);
+  return value || "";
+}
+
+export function secureEqual(a, b) {
+  const aa = Buffer.from(String(a ?? ""));
+  const bb = Buffer.from(String(b ?? ""));
+  return aa.length === bb.length && crypto.timingSafeEqual(aa, bb);
+}
+
+export function computeNonce(time, accountId) {
+  return crypto
+    .createHmac("sha256", env("RING_HMAC_KEY"))
+    .update(`${time}:${accountId}`, "utf8")
+    .digest("base64url");
+}
+
+export function verifyWebhook(rawBody, signatureHeader) {
+  if (!signatureHeader) return false;
+  const received = String(signatureHeader).replace(/^sha256=/i, "").trim();
+  const expected = crypto
+    .createHmac("sha256", env("RING_HMAC_KEY"))
+    .update(Buffer.from(rawBody || "", "utf8"))
+    .digest("hex");
+  return secureEqual(expected, received);
+}
+
+export async function ringFetch(path, accessToken, options = {}) {
+  const headers = new Headers(options.headers || {});
+  headers.set("authorization", `Bearer ${accessToken}`);
+  if (options.body && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+  return fetch(`${RING_API}${path}`, { ...options, headers });
+}
+
+export async function exchangeAuthorizationCode(code) {
+  const response = await fetch(RING_OAUTH, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      client_id: env("RING_CLIENT_ID"),
+      client_secret: env("RING_CLIENT_SECRET")
+    })
+  });
+
+  const text = await response.text();
+  let payload;
+  try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
+  if (!response.ok) {
+    const error = new Error(`Ring token exchange failed (${response.status})`);
+    error.details = payload;
+    throw error;
+  }
+  return payload;
+}
+
+export async function getRingMe(accessToken) {
+  const response = await ringFetch("/v1/users/me", accessToken);
+  const text = await response.text();
+  let payload;
+  try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
+  if (!response.ok) throw new Error(`GET /v1/users/me failed (${response.status})`);
+
+  const accountId =
+    payload?.meta?.account_id ||
+    payload?.data?.attributes?.account_id ||
+    payload?.data?.relationships?.account?.data?.id ||
+    payload?.data?.id ||
+    payload?.account_id ||
+    payload?.id;
+
+  if (!accountId) {
+    const error = new Error("Could not find Ring account_id in /v1/users/me response");
+    error.details = payload;
+    throw error;
+  }
+  return { accountId, profile: payload };
+}
+
+export async function refreshTokens(record) {
+  const response = await fetch(RING_OAUTH, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: record.refresh_token,
+      client_id: env("RING_CLIENT_ID"),
+      client_secret: env("RING_CLIENT_SECRET")
+    })
+  });
+
+  const text = await response.text();
+  let payload;
+  try { payload = JSON.parse(text); } catch { payload = { raw: text }; }
+  if (!response.ok) throw new Error(`Ring token refresh failed (${response.status})`);
+
+  const now = Date.now();
+  return {
+    ...record,
+    access_token: payload.access_token,
+    refresh_token: payload.refresh_token || record.refresh_token,
+    token_type: payload.token_type || record.token_type || "Bearer",
+    scope: payload.scope || record.scope || "",
+    expires_in: payload.expires_in || 14400,
+    expires_at: now + (payload.expires_in || 14400) * 1000,
+    updated_at: new Date(now).toISOString()
+  };
+}
+
+function storeOptions() {
+  return {
+    siteID: env("NETLIFY_SITE_ID"),
+    token: env("NETLIFY_AUTH_TOKEN")
+  };
+}
+
+export function tokensStore() {
+  return getStore("ring-tokens", storeOptions());
+}
+
+export function eventsStore() {
+  return getStore("ring-events", storeOptions());
+}
+
+export async function getTokenRecords() {
+  const store = tokensStore();
+  const result = await store.list({ prefix: "token-" });
+  const records = [];
+  for (const blob of result.blobs || []) {
+    try {
+      const record = await store.get(blob.key, { type: "json" });
+      if (record) records.push(record);
+    } catch (error) {
+      console.error("Unable to read token record", blob.key, error);
+    }
+  }
+  return records;
+}
+
+export async function putTokenRecord(record) {
+  await tokensStore().setJSON(`token-${record.account_id}`, record);
+}
+
+export async function getLinkedRecord() {
+  const records = await getTokenRecords();
+  return records
+    .filter((record) => record.status === "linked")
+    .sort((a, b) =>
+      String(b.updated_at || b.created_at || "").localeCompare(
+        String(a.updated_at || a.created_at || "")
+      )
+    )[0] || null;
+}
+
+export async function ensureFreshLinkedRecord() {
+  let record = await getLinkedRecord();
+  if (!record) return null;
+
+  if (!record.expires_at || Date.now() > record.expires_at - 5 * 60 * 1000) {
+    record = await refreshTokens(record);
+    await putTokenRecord(record);
+  }
+  return record;
+}
+
+export function maskEmail(email) {
+  const value = String(email || "user@famicura.local");
+  const [name = "user", domain = "famicura.local"] = value.split("@");
+  if (name.length <= 2) return `${name[0] || "u"}*@${domain}`;
+  return `${name[0]}***${name[name.length - 1]}@${domain}`;
+}
