@@ -202,11 +202,18 @@ pro Safari a opravy míří na mechanismy, které ji tam mohou způsobit.
 - Název kamery je větší, tučný a v plné barvě. `#devices` si drží třídu
   `.muted` kvůli zástupnému textu, takže název si barvu určuje sám, jinak by
   ji zdědil šedou.
-- Technický řádek s `ava1.ring.device.…` a typem zařízení je pryč. Celé ID
-  zůstává v `title` karty a ve sloupci exportu logu.
+- Technický řádek s `ava1.ring.device.…` a typem zařízení je pryč. ID zůstává
+  ve sloupci exportu logu; na kartě nemá `title`, protože z něj byl při
+  najetí myší přes půl obrazovky velký tooltip.
 - **Offline** zůstává jako odznak - rozhoduje o tom, jestli z kamery něco
   poteče.
 - Místo textu *Živý obraz* je tlačítko s ikonou kamery v bledě modré. Bledé
   pozadí neunese bílou ikonu, takže ikona je tmavě modrá (kontrast 7,5:1)
   a jemný okraj drží tvar tlačítka proti bílé kartě. Popisek nese
   `aria-label` („Živý obraz – název kamery") a `title`.
+
+## v10 - dlaždice
+
+Tlačítko kamery je v dlaždicích na celou šířku a název je vycentrovaný.
+`grid-auto-rows:1fr` drží všechny dlaždice stejně vysoké, takže dvouřádkový
+název v jednom řádku nerozhází mřížku.
