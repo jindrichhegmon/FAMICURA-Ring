@@ -383,3 +383,22 @@ Běží vůbec náš proces?
 
     ssh -i ~/.ssh/id_ed25519_jhnapps root@95.216.201.2 \
       "su - jhnapps -c 'pm2 list && pm2 logs famicura-ring --lines 30 --nostream'"
+
+## v15 - tajné hodnoty v .env na VPS
+
+Na VPS skončila v `.env` nevyplněná šablona (667 bajtů, stejně jako
+`.env.example`). Prázdné tak zůstaly `SQL_PASSWORD` i `RING_HMAC_KEY`, a
+`init-db.mjs` proto hlásil `Chybí nastavení SQL (SQL_PASSWORD)`.
+
+Doplňuje je skript, spouští se z Macu ve složce projektu:
+
+    ./deploy/vps-env.sh
+
+* **SQL_PASSWORD** převezme přímo na serveru z `/opt/pecedoma-sestra/.env`
+  (stejný server 90.182.39.103, stejný uživatel `clb1_app`). Heslo nikudy
+  necestuje. Když se `SQL_SERVER` nebo `SQL_USER` liší, nekopíruje nic a
+  zeptá se na heslo.
+* **RING_HMAC_KEY** zadáte vy (Netlify → Site configuration → Environment
+  variables). Vstup je skrytý a do ssh jde přes stdin, takže hodnota
+  nebude v historii příkazů ani ve výpisu procesů.
+* Vypíše, které klíče jsou vyplněné (bez hodnot), a restartuje aplikaci.
