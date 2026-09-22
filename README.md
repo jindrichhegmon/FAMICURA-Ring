@@ -469,3 +469,40 @@ přes den.
   projeví hned, i během běžící analýzy. Karta kamery ukazuje, co sleduje.
 * Pravidla jsou v jednom modulu `public/watch.js`. Serverová funkce ho
   importuje přímo, takže server ukládá přesně to, co stránka uplatňuje.
+
+## v18 - spořič obrazovky: obrazovka nezhasne a každé přerušení se zapíše
+
+Analýza a nahrávání běží v prohlížeči nad překreslovaným obrazem. Když se
+stránka skryje (spořič obrazovky, zamčení, jiná záložka) nebo počítač usne,
+prohlížeč přestane kreslit a analýza i nahrávání stojí. Dřív to nebylo nikde
+poznat.
+
+### Obrazovka nezhasne
+
+Dokud některá kamera analyzuje nebo nahrává, stránka drží obrazovku
+rozsvícenou (Screen Wake Lock, `public/wake.js`). Spořič ani uspání obrazovky
+pak nenastanou. Pod seznamem kamer je to napsané. Prohlížeč zámek při skrytí
+stránky pouští sám, proto se po návratu bere znovu. Ruční zamčení nebo uspání
+počítače tím zabránit nejde. Prohlížeč bez podpory to stránka řekne a poradí
+vypnout spořič v nastavení počítače.
+
+### Přerušení se zapíše
+
+Do logu analýzy i do CLB1 (`druh` = `pause` / `resume`, závažnost varování):
+
+* `Analýza přerušena - stránka není vidět …` se zapíše s časem, kdy
+  stránka zmizela, jakmile skrytí trvá alespoň 10 s.
+* `Analýza znovu běží - přerušení 47 min (12:03:10-12:50:02).` se zapíše
+  s prvním snímkem po mezeře.
+
+Mezera se měří podle snímků, ne podle událostí prohlížeče. Tak se zachytí
+i uspání počítače, při kterém prohlížeč nestihne nic ohlásit. Obnovení
+spojení mezeru nevynuluje. Kratší přestávky, třeba pohled na jinou záložku,
+se nezapisují. Totéž platí pro samotné nahrávání („Nahrávání přerušeno“):
+video v tu dobu ukazuje jen poslední snímek.
+
+### Opravená chyba
+
+Po zastavení nahrávání stránka hned hlásila změnu, ale nahrávání se
+opravdu ukončilo až ve chvíli, kdy rekordér vydal soubor. Tahle druhá změna
+se už neohlásila, takže obrazovka zůstávala rozsvícená.

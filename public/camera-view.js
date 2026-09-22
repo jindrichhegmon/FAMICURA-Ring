@@ -5,7 +5,7 @@
  * Everything shared - the analysis log, the recordings list, CLB1, the folder
  * and the scheduler - stays in index.html and is reached through callbacks.
  */
-import { LiveAnalyzer, fmtTime, drawBackground, drawSkeleton } from '/analyzer.js';
+import { LiveAnalyzer, fmtTime, fmtClock, drawBackground, drawSkeleton } from '/analyzer.js';
 import { WatchFilter, defaultWatch, describeWatch } from '/watch.js';
 
 const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
@@ -19,6 +19,20 @@ const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.co
 const STALL_MS = 7000;        // no new frame for this long counts as frozen
 const WATCHDOG_MS = 2000;
 const MAX_RECONNECTS = 8;
+
+/*
+ * A screen saver, a locked screen or a sleeping computer stops the browser
+ * drawing, and with it analysis and recording. A gap this long between two
+ * drawn frames is written to the log and CLB1, so nobody takes silence for
+ * "nothing happened". Shorter ones - a glance at another tab - are not news.
+ */
+const GAP_MS = 10000;
+
+function fmtGap(ms) {
+  const min = Math.round(ms / 60000);
+  if (ms < 60000) return `${Math.round(ms / 1000)} s`;
+  return min < 90 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
+}
 
 // Icon-only control, so the state has to reach assistive tech through the label.
 const SPEAKER_BODY = '<path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" stroke="none"/>';
@@ -115,6 +129,10 @@ export class CameraView {
     this.chunks = [];
     this.recStartedAt = 0;
     this.timerId = null;
+
+    this.lastDrawnAt = null;          // when the canvas last got a new frame
+    this.pausedAt = null;             // when the page was hidden, if it was
+    this.pauseTimer = null;
 
     this.analyzing = false;
     this.landmarker = null;
@@ -346,6 +364,7 @@ export class CameraView {
 
   /** Ukončit: the only thing that ends a stream for good. */
   async close() {
+    clearTimeout(this.pauseTimer);
     this.stopAnalysis();
     if (this.recording) this.stopRecording();
     await this.teardown({ keepIntent: false });
@@ -421,10 +440,65 @@ export class CameraView {
     this.fitCanvas();
     if (v.readyState >= 2 && v.currentTime !== this.lastFrameTime) {
       this.lastFrameTime = v.currentTime;
+      this.noteFrame(Date.now());
       drawBackground(this.cctx, this.el.canvas, v, this.displayMode, this.el.small, this.sctx);
       if (this.analyzing) this.detectPose(v);
     }
     this.rafId = requestAnimationFrame(() => this.renderLoop());
+  }
+
+  /* ---------- gaps: screen saver, locked screen, sleep ---------- */
+
+  /** What is being interrupted, in a form the sentence can agree with. */
+  running() {
+    if (this.analyzing && this.recording) return { who: 'Analýza i nahrávání', stopped: 'přerušeny' };
+    if (this.analyzing) return { who: 'Analýza', stopped: 'přerušena' };
+    return { who: 'Nahrávání', stopped: 'přerušeno' };
+  }
+
+  sinceStart(ms) {
+    return this.analyzing ? (ms - this.analysisStartedAt) / 1000 : 0;
+  }
+
+  /**
+   * The page was hidden. Say so once it has lasted, stamped with when it began;
+   * if the computer goes to sleep first, noteFrame still reports the gap.
+   */
+  onPageHidden() {
+    if (!this.analyzing && !this.recording) return;
+    this.pausedAt = Date.now();
+    clearTimeout(this.pauseTimer);
+    this.pauseTimer = setTimeout(() => {
+      if (this.pausedAt === null || document.visibilityState !== 'hidden') return;
+      const { who, stopped } = this.running();
+      this.log({ at: new Date(this.pausedAt), t: this.sinceStart(this.pausedAt), kind: 'pause', level: 'warn',
+                 text: `${who} ${stopped} – stránka není vidět (spořič obrazovky, zamčení nebo jiná záložka).` });
+    }, GAP_MS);
+  }
+
+  /** Every drawn frame: if the last one was long ago, the gap goes on record. */
+  noteFrame(now) {
+    if (this.analyzing || this.recording) {
+      const from = this.pausedAt ?? this.lastDrawnAt;
+      if (from !== null && now - from >= GAP_MS) {
+        const { who } = this.running();
+        this.log({ at: new Date(now), t: this.sinceStart(now), kind: 'resume', level: 'warn',
+                   text: `${who} znovu běží – přerušení ${fmtGap(now - from)} (${fmtClock(from)}–${fmtClock(now)}).` });
+        // Motion is measured frame to frame; across the gap it would be invented.
+        if (this.analyzing) this.analyzer.notePause();
+      }
+    }
+    this.lastDrawnAt = now;
+    this.pausedAt = null;
+    clearTimeout(this.pauseTimer);
+  }
+
+  /** Analysis or recording starts from nothing: there is no gap to measure yet. */
+  resetGap() {
+    if (this.analyzing || this.recording) return;
+    this.lastDrawnAt = null;
+    this.pausedAt = null;
+    clearTimeout(this.pauseTimer);
   }
 
   /* ---------- recording ---------- */
@@ -437,6 +511,7 @@ export class CameraView {
       return;
     }
     this.chunks = [];
+    this.resetGap();
 
     // captureStream only produces frames from a canvas that is visible and being
     // drawn, so switch the pipeline on before grabbing the stream.
@@ -479,6 +554,8 @@ export class CameraView {
       this.setMsg(`Nahrávka hotova (${(blob.size / 1024 / 1024).toFixed(1)} MB).`);
       if (this.recorder === recorder) { this.recorder = null; this.recording = false; }
       this.updateRender();
+      // Only now is recording really over; the page lets the screen sleep again on this.
+      this.hooks.onChange();
     };
 
     this.recStartedAt = Date.now();
@@ -522,6 +599,7 @@ export class CameraView {
       return;
     }
     this.analyzer.reset();
+    this.resetGap();
     this.analysisStartedAt = Date.now();
     this.analyzing = true;
     btn.textContent = 'Zastavit analýzu';

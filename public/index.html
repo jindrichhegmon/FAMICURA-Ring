@@ -218,6 +218,7 @@
 
       <div id="devices" class="muted list" style="margin-top:12px">Zatím nenačteno.</div>
       <p id="planMsg" class="muted" style="margin:12px 0 0"></p>
+      <p id="wakeMsg" class="muted" style="margin:8px 0 0"></p>
     </div>
 
     <div class="c hide" id="scheduleCard">
@@ -340,6 +341,7 @@ import { fmtClock, createLogEntry, boundFrom, filterLog, logToCsv, csvFilename }
 import { MAX_INTERVALS, isWithin, dueRecordings, fmtInterval, collectIntervals } from '/schedule.js';
 import { CameraView } from '/camera-view.js';
 import { WATCH_EVENTS, normalizeWatch, fmtAfter } from '/watch.js';
+import { WakeKeeper } from '/wake.js';
 import { isSupported as folderSupported, pickFolder, loadHandle, saveHandle,
          forgetHandle, ensurePermission, writeFile } from '/folder.js';
 
@@ -557,9 +559,29 @@ function showPlan(text, bad) {
 
 function onViewsChanged() {
   markActiveCamera();
-  const analysing = [...views.values()].some((v) => v.analyzing);
-  if (analysing) $('logCard').classList.remove('hide');
+  const all = [...views.values()];
+  if (all.some((v) => v.analyzing)) $('logCard').classList.remove('hide');
+  wake.set(all.some((v) => v.analyzing || v.recording));
 }
+
+// While anything is analysed or recorded, the screen must not go dark: a
+// screen saver hides the page and the browser stops drawing it.
+function showWake({ supported, wanted, held, error }) {
+  const el = $('wakeMsg');
+  if (!wanted) { el.textContent = ''; return; }
+  if (held) {
+    el.textContent = 'Obrazovka nezhasne, dokud běží analýza nebo nahrávání. '
+      + 'Zamčení ani uspání počítače tím ale zabránit nejde.';
+  } else if (!supported) {
+    el.innerHTML = '<span class="bad">Tento prohlížeč neumí zabránit spořiči obrazovky. Aby analýza '
+      + 'a nahrávání neběžely s přestávkami, vypněte spořič a uspávání obrazovky v nastavení počítače.</span>';
+  } else if (error) {
+    el.innerHTML = `<span class="bad">Zhasnutí obrazovky se nepodařilo zabránit (${esc(error)}). `
+      + 'Vypněte spořič obrazovky v nastavení počítače.</span>';
+  }
+}
+
+const wake = new WakeKeeper({ onChange: showWake });
 
 function openCamera(device, { auto = false } = {}) {
   const existing = views.get(device.id);
@@ -596,14 +618,17 @@ function openCamera(device, { auto = false } = {}) {
 }
 
 // Coming back to the tab only revives what the browser itself dropped; see
-// CameraView.onPageVisible for why hiding the page ends nothing.
+// CameraView.onPageVisible for why hiding the page ends nothing. The browser
+// also drops the screen lock on hiding, so it is taken again here.
 function onPageVisible() {
   for (const v of views.values()) v.onPageVisible();
+  wake.sync();
 }
 
 window.addEventListener('pageshow', onPageVisible);
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') onPageVisible();
+  else for (const v of views.values()) v.onPageHidden();
 });
 
 /* ---------- recordings ---------- */
