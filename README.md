@@ -438,3 +438,34 @@ obnovování spojení, zkusí plánovač připojit znovu.
   smazané. Teď se zdroj určí při startu nahrávání.
 * **Sdílet** v prohlížeči bez sdílení stáhlo nejnovější nahrávku, ne tu,
   na kterou jste klikli.
+
+## v17 - co má analýza u které kamery hlásit
+
+V seznamu kamer má každá kamera tlačítko **Analýza**. Otevře editor, kde se
+pro tuto kameru zvolí, které události se hlásí do logu a do CLB1:
+
+| Událost | Dá se nastavit |
+|---|---|
+| Pád | zapnout/vypnout, hodiny |
+| Dlouhé ležení | zapnout/vypnout, **déle než** 6 s - 30 min, hodiny |
+| Prudký pohyb | zapnout/vypnout, hodiny |
+| Odchod ze záběru (a návrat) | zapnout/vypnout, **déle než** 2 s - 5 min, hodiny |
+| Změny polohy (stojí, sedí, leží) | zapnout/vypnout, hodiny |
+
+Prázdné hodiny znamenají celý den. Když je začátek větší než konec, hodiny
+platí přes půlnoc. Hodí se to třeba u ložnice: pád hlásit vždy, ležení jen
+přes den.
+
+* Analýza zůstává v prohlížeči (MediaPipe) a obraz nikam neodchází. Volnému
+  textu nerozumí. Vybírá se jen z událostí, které detektor opravdu pozná.
+* Detektor vidí pořád všechno. Nastavení rozhoduje o tom, co se **nahlásí**.
+  Vypnutá událost se neobjeví v logu ani v CLB1. Návrat do záběru se ohlásí
+  jen tehdy, když byl ohlášený i odchod. Výpadky spojení se hlásí vždy.
+* Délky „déle než“ dostává přímo detektor (`LiveAnalyzer.configure`).
+  Výchozí hodnoty 6 s a 2 s odpovídají dosavadnímu chování, takže kamera bez
+  nastavení hlásí všechno jako dřív.
+* Nastavení se ukládá na serveru (`/api/watch`, Netlify Blobs `ring-watch`)
+  jako plány, takže platí na každém zařízení. Uložení se na otevřené kameře
+  projeví hned, i během běžící analýzy. Karta kamery ukazuje, co sleduje.
+* Pravidla jsou v jednom modulu `public/watch.js`. Serverová funkce ho
+  importuje přímo, takže server ukládá přesně to, co stránka uplatňuje.

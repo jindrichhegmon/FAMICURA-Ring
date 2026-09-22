@@ -14,7 +14,7 @@ const L_SHOULDER = 11, R_SHOULDER = 12, L_HIP = 23, R_HIP = 24, L_ANKLE = 27, R_
 
 // Thresholds carried over from the prototype.
 const STATE_HOLD_S   = 1.0;   // a posture must persist this long before it is reported
-const LONG_LIE_S     = 6.0;
+const LONG_LIE_S     = 6.0;   // defaults; each camera can ask for longer (see watch.js)
 const MISSING_S      = 2.0;
 const FALL_LYING_S   = 1.8;   // lying this long after a drop confirms a fall
 const CANDIDATE_S    = 2.5;   // a drop that does not end lying down expires
@@ -29,6 +29,11 @@ export function fmtTime(sec) {
   const m = Math.floor(Math.max(0, sec) / 60);
   const s = Math.floor(Math.max(0, sec) % 60);
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+// "6 s", "5 min" – long-lie thresholds now reach half an hour.
+function fmtDuration(sec) {
+  return sec < 90 ? `${Math.round(sec)} s` : `${Math.round(sec / 60)} min`;
 }
 
 function at(lm, i) { return lm?.[i] || null; }
@@ -73,9 +78,16 @@ export function stateFor(ft) {
  * found nobody. Every emitted event is {t, kind, level, text}.
  */
 export class LiveAnalyzer {
-  constructor(onEvent) {
+  constructor(onEvent, options) {
     this.onEvent = onEvent || (() => {});
+    this.configure(options);
     this.reset();
+  }
+
+  /** How long lying still or being out of view has to last before it is reported. */
+  configure({ longLieS = LONG_LIE_S, missingS = MISSING_S } = {}) {
+    this.longLieS = longLieS;
+    this.missingS = missingS;
   }
 
   reset() {
@@ -142,7 +154,7 @@ export class LiveAnalyzer {
 
   pushMissing(t) {
     if (this.missingSince === null) this.missingSince = t;
-    if (!this.missingReported && t - this.missingSince >= MISSING_S) {
+    if (!this.missingReported && t - this.missingSince >= this.missingS) {
       this.missingReported = true;
       this.emit(t, "missing", "warn", "Ztráta detekce postavy – v obraze není nikdo rozpoznán.");
     }
@@ -172,10 +184,10 @@ export class LiveAnalyzer {
       return;
     }
     if (this.lyingSince === null) this.lyingSince = t;
-    if (!this.longLieReported && t - this.lyingSince >= LONG_LIE_S) {
+    if (!this.longLieReported && t - this.lyingSince >= this.longLieS) {
       this.longLieReported = true;
       this.emit(t, "longlie", "warn",
-        `Dlouhé ležení – osoba je nízko u země už přibližně ${Math.round(t - this.lyingSince)} s.`);
+        `Dlouhé ležení – osoba je nízko u země už přibližně ${fmtDuration(t - this.lyingSince)}.`);
     }
   }
 

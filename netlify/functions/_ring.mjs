@@ -176,6 +176,10 @@ export function schedulesStore() {
   return getStore("ring-schedules", storeOptions());
 }
 
+export function watchStore() {
+  return getStore("ring-watch", storeOptions());
+}
+
 export async function putDiag(kind, data) {
   try {
     await eventsStore().setJSON(`diag-${Date.now()}-${kind}`, {

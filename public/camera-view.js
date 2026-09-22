@@ -6,6 +6,7 @@
  * and the scheduler - stays in index.html and is reached through callbacks.
  */
 import { LiveAnalyzer, fmtTime, drawBackground, drawSkeleton } from '/analyzer.js';
+import { WatchFilter, defaultWatch, describeWatch } from '/watch.js';
 
 const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
 
@@ -120,6 +121,7 @@ export class CameraView {
     this.connections = [];
     this.analysisStartedAt = 0;
     this.analyzer = new LiveAnalyzer((ev) => this.log(ev));
+    this.filter = new WatchFilter(defaultWatch());   // what this camera reports; see setWatch
 
     this.card = template.content.firstElementChild.cloneNode(true);
     const q = (sel) => this.card.querySelector(sel);
@@ -127,13 +129,22 @@ export class CameraView {
       name: q('.name'), video: q('video'), canvas: q('canvas.draw'), small: q('canvas.small'),
       modes: q('.modes'), record: q('.record'), analyze: q('.analyze'), sound: q('.sound'),
       retry: q('.retry'), recBar: q('.recBar'), timer: q('.timer'), stop: q('.stop'), msg: q('.msg'),
+      watchInfo: q('.watchInfo'),
     };
     this.cctx = this.el.canvas.getContext('2d');
     this.sctx = this.el.small.getContext('2d');
     this.card.dataset.id = this.device.id;
     this.el.name.textContent = '– ' + this.device.name;
     this.setSoundIcon(true);
+    this.setWatch(defaultWatch());
     this.bind();
+  }
+
+  /** Which events this camera reports; takes effect at once, even mid-analysis. */
+  setWatch(watch) {
+    this.filter.set(watch);
+    this.analyzer.configure(this.filter.detectorOptions());
+    this.el.watchInfo.textContent = 'Sleduje: ' + describeWatch(this.filter.watch);
   }
 
   bind() {
@@ -170,7 +181,9 @@ export class CameraView {
   }
 
   log(ev) {
-    this.hooks.onLog({ ...ev, at: ev.at || new Date(), device: this.device });
+    const at = ev.at || new Date();
+    if (!this.filter.accept(ev, at)) return;       // not watched here: neither the log nor CLB1
+    this.hooks.onLog({ ...ev, at, device: this.device });
   }
 
   /* ---------- connection ---------- */

@@ -152,6 +152,21 @@
   .schedRow input[type=checkbox]{width:22px;height:22px;min-height:22px;margin:0}
   .schedRow.live{background:#eef7f0;border-radius:10px;padding-left:8px;padding-right:8px}
 
+  .watchRow{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;
+            padding:10px 0;border-bottom:1px solid #eef2f6}
+  .watchRow:last-child{border-bottom:0}
+  .watchRow .on{flex:1 1 220px;display:flex;align-items:center;gap:8px;min-height:44px;
+                font-weight:700;cursor:pointer}
+  .watchRow input[type=checkbox]{width:22px;height:22px;min-height:22px;margin:0}
+  .watchRow .opt{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:.85rem;color:#5a6b7d}
+  /* od–do stays one line; the two fields share it, however narrow */
+  .watchRow .hours{flex:1 1 250px;flex-wrap:nowrap;min-width:0;max-width:100%}
+  .watchRow .hours input[type=time]{flex:1 1 0;min-width:0;width:auto;padding:8px}
+  .watchRow select{font-size:16px;min-height:44px;padding:8px;border:1px solid #bcc8d1;
+                   border-radius:12px;background:#fff}
+  .watchRow.off .opt{opacity:.45}
+  .view .watchInfo{margin:10px 0 0;font-size:.85rem}
+
   #folderBox{border-bottom:1px solid #eef2f6;padding-bottom:12px}
   #recordings{list-style:none;margin:0;padding:0}
   #recordings .saved{color:#0b5c2e;font-size:.8rem;font-weight:700}
@@ -218,6 +233,19 @@
       <p id="schedMsg" class="muted" style="margin:10px 0 0"></p>
     </div>
 
+    <div class="c hide" id="watchCard">
+      <h2>Sledované události <span id="watchFor" class="muted"></span></h2>
+      <p class="muted" style="margin:0 0 6px">
+        Co má analýza u této kamery hlásit do logu a do CLB1. Prázdné hodiny znamenají celý den;
+        začátek větší než konec platí přes půlnoc (22:00–06:00).
+      </p>
+      <div id="watchRows"></div>
+      <div class="row" style="margin-top:12px">
+        <button id="watchSave" class="wide">Uložit sledované události</button>
+      </div>
+      <p id="watchMsg" class="muted" style="margin:10px 0 0"></p>
+    </div>
+
     <div class="c" id="recCard">
       <h2>Nahrávky</h2>
 
@@ -258,6 +286,7 @@
           <button class="analyze">Spustit analýzu</button>
           <button class="retry hide">Připojit znovu</button>
         </div>
+        <p class="watchInfo muted"></p>
 
         <div class="row recBar hide" style="margin-top:10px">
           <span class="muted">Nahrávám <span class="timer">00:00</span></span>
@@ -310,6 +339,7 @@
 import { fmtClock, createLogEntry, boundFrom, filterLog, logToCsv, csvFilename } from '/analyzer.js';
 import { MAX_INTERVALS, isWithin, dueRecordings, fmtInterval, collectIntervals } from '/schedule.js';
 import { CameraView } from '/camera-view.js';
+import { WATCH_EVENTS, normalizeWatch, fmtAfter } from '/watch.js';
 import { isSupported as folderSupported, pickFolder, loadHandle, saveHandle,
          forgetHandle, ensurePermission, writeFile } from '/folder.js';
 
@@ -409,6 +439,7 @@ async function refreshStatus() {
   $('app').classList.remove('hide');
   renderDiag(body);
   loadSchedules();
+  loadWatches();
   initFolder().catch(() => {});
 }
 
@@ -491,6 +522,7 @@ $('loadDevices').onclick = async () => {
         <button class="go icon" data-id="${esc(d.id)}" data-name="${esc(d.name)}"
                 aria-label="Živý obraz – ${esc(d.name)}" title="Živý obraz">${CAMERA_ICON}</button>
         <button class="sched sec" data-id="${esc(d.id)}" data-name="${esc(d.name)}">Plán</button>
+        <button class="watch sec" data-id="${esc(d.id)}" data-name="${esc(d.name)}">Analýza</button>
       </div>
     </div>`; }).join('');
 
@@ -500,6 +532,9 @@ $('loadDevices').onclick = async () => {
   });
   $('devices').querySelectorAll('button.sched').forEach((b) => {
     b.onclick = () => openSchedule({ id: b.dataset.id, name: b.dataset.name });
+  });
+  $('devices').querySelectorAll('button.watch').forEach((b) => {
+    b.onclick = () => openWatch({ id: b.dataset.id, name: b.dataset.name });
   });
 
   markActiveCamera();
@@ -552,6 +587,7 @@ function openCamera(device, { auto = false } = {}) {
       onViewsChanged();
     },
   });
+  view.setWatch(watchFor(device.id));
   views.set(device.id, view);
   $('streams').append(view.card);
   view.start({ scroll: !auto });
@@ -935,6 +971,97 @@ async function loadSchedules() {
   const { res, body } = await api('/api/schedules');
   if (res.ok) schedules = body.schedules || {};
 }
+
+/* ---------- which events each camera reports ---------- */
+
+/*
+ * Kept on the server like the schedules, so a phone and a desktop watch for
+ * the same things. A camera without a stored setting reports everything, as
+ * analysis always did.
+ */
+let watches = {};
+let watchEditFor = null;      // the camera whose events are being edited
+
+function watchFor(deviceId) {
+  return normalizeWatch(watches[deviceId]).watch;
+}
+
+async function loadWatches() {
+  const { res, body } = await api('/api/watch');
+  if (!res.ok) return;
+  watches = body.watch || {};
+  for (const v of views.values()) v.setWatch(watchFor(v.device.id));
+}
+
+function renderWatchRows(watch) {
+  $('watchRows').innerHTML = '';
+  for (const e of WATCH_EVENTS) {
+    const r = watch[e.kind];
+    const row = document.createElement('div');
+    row.className = 'watchRow' + (r.enabled ? '' : ' off');
+    row.dataset.kind = e.kind;
+    const after = e.after
+      ? `<label class="opt">déle než <select class="after" aria-label="${esc(e.label)} – déle než">
+           ${e.after.map((s) => `<option value="${s}" ${s === r.after ? 'selected' : ''}>${fmtAfter(s)}</option>`).join('')}
+         </select></label>`
+      : '';
+    row.innerHTML = `
+      <label class="on"><input type="checkbox" class="enabled" ${r.enabled ? 'checked' : ''}> ${esc(e.label)}</label>
+      ${after}
+      <span class="opt hours">jen
+        <input class="from" type="time" value="${esc(r.from)}" aria-label="${esc(e.label)} – od">
+        –
+        <input class="to" type="time" value="${esc(r.to)}" aria-label="${esc(e.label)} – do">
+      </span>`;
+    row.querySelector('.enabled').onchange = (ev) => row.classList.toggle('off', !ev.target.checked);
+    $('watchRows').append(row);
+  }
+}
+
+function watchRowValues() {
+  const w = {};
+  for (const row of $('watchRows').querySelectorAll('.watchRow')) {
+    w[row.dataset.kind] = {
+      enabled: row.querySelector('.enabled').checked,
+      from: row.querySelector('.from').value,
+      to: row.querySelector('.to').value,
+      ...(row.querySelector('.after') ? { after: Number(row.querySelector('.after').value) } : {}),
+    };
+  }
+  return w;
+}
+
+function openWatch(device) {
+  watchEditFor = device;
+  $('watchFor').textContent = '– ' + device.name;
+  $('watchCard').classList.remove('hide');
+  renderWatchRows(watchFor(device.id));
+  $('watchMsg').textContent = '';
+  $('watchCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+$('watchSave').onclick = async () => {
+  if (!watchEditFor) return;
+  const device = watchEditFor;
+
+  // Same rules as the server, so a mistake is named before the round trip.
+  const checked = normalizeWatch(watchRowValues());
+  if (!checked.ok) { $('watchMsg').innerHTML = `<span class="bad">${esc(checked.error)}</span>`; return; }
+
+  $('watchSave').disabled = true;
+  $('watchMsg').textContent = 'Ukládám…';
+  const { res, body } = await api('/api/watch', {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ deviceId: device.id, watch: checked.watch })
+  });
+  $('watchSave').disabled = false;
+  if (!res.ok) { $('watchMsg').innerHTML = `<span class="bad">${esc(body.error || 'Chyba')}</span>`; return; }
+
+  watches[device.id] = body.watch;
+  views.get(device.id)?.setWatch(body.watch);    // an open camera switches at once
+  $('watchMsg').textContent = `Uloženo pro ${device.name}.`;
+};
 
 // Deciding to start is separate from acting on it, so the rule stays readable.
 async function schedulerTick() {
