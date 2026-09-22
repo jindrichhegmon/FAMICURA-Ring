@@ -16,6 +16,10 @@
   to = "/.netlify/functions/link-claim"
   status = 200
 [[redirects]]
+  from = "/api/link-seen"
+  to = "/.netlify/functions/link-seen"
+  status = 200
+[[redirects]]
   from = "/api/webhook"
   to = "/.netlify/functions/webhook"
   status = 200

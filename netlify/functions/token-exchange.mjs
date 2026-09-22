@@ -7,7 +7,13 @@ import {
 } from "./_ring.mjs";
 
 export default async (req) => {
-  if (req.method !== "POST") return json({ ok:false, error:"POST required" }, 405);
+  if (req.method !== "POST") {
+    await putDiag("exchange-bad-method", {
+      method: req.method,
+      query: [...new URL(req.url).searchParams.keys()]
+    });
+    return json({ ok:false, error:"POST required" }, 405);
+  }
 
   try {
     const raw = await req.text();

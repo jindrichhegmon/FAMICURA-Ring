@@ -2,7 +2,10 @@ import crypto from "node:crypto";
 import { verifyWebhook, eventsStore, putDiag, json } from "./_ring.mjs";
 
 export default async (req) => {
-  if (req.method !== "POST") return json({ ok:false, error:"POST required" }, 405);
+  if (req.method !== "POST") {
+    await putDiag("webhook-bad-method", { method: req.method });
+    return json({ ok:false, error:"POST required" }, 405);
+  }
 
   try {
     const raw = await req.text();
