@@ -98,6 +98,8 @@
   #devices.tiles .dev .actions{flex-direction:column}
   #devices.tiles .dev .actions > *{width:100%}
   .badge.plan{color:#0d4a75;background:#e7f1fb}
+  .badge.live{color:#0b5c2e;background:#dff3e6}
+  .dev.active{outline:2px solid #107a3d;outline-offset:2px;border-radius:12px;background:#f4fbf6}
   /* A utility class has to beat later rules of equal weight (.seg) and any id
      rule, so it carries the flag. */
   .hide{display:none !important}
@@ -308,6 +310,28 @@ async function api(path, options) {
 }
 
 // Ring ids are ~100 chars of base32; the tail is what tells them apart.
+// The card of the camera currently on screen is outlined, so it is obvious
+// which one the player is showing.
+function markActiveCamera() {
+  const liveId = pc && currentDevice ? currentDevice.id : null;
+  $('devices').querySelectorAll('.dev').forEach((card) => {
+    const id = card.querySelector('button.go')?.dataset.id;
+    const active = !!liveId && id === liveId;
+    card.classList.toggle('active', active);
+
+    const meta = card.querySelector('.meta');
+    let badge = meta.querySelector('.badge.live');
+    if (active && !badge) {
+      badge = document.createElement('span');
+      badge.className = 'badge live';
+      badge.textContent = 'živě';
+      meta.append(badge);
+    } else if (!active && badge) {
+      badge.remove();
+    }
+  });
+}
+
 function shortId(id) {
   const v = String(id ?? '');
   return v.length > 26 ? v.slice(0, 18) + '…' + v.slice(-6) : v;
@@ -460,6 +484,7 @@ $('loadDevices').onclick = async () => {
     b.onclick = () => openSchedule({ id: b.dataset.id, name: b.dataset.name });
   });
 
+  markActiveCamera();
   schedulerTick().catch(() => {});
 };
 
@@ -616,6 +641,7 @@ async function startStream(deviceId, name, isReconnect) {
 
     $('stop').disabled = false;
     startWatchdog();
+    markActiveCamera();
     updateRender();
   } catch (e) {
     if (wantStream && currentDevice) reconnect(`Nepodařilo se připojit (${e.message})`);
@@ -662,6 +688,7 @@ async function teardown({ keepIntent }) {
   setSoundIcon(true);
   $('sound').classList.add('hide');
   $('stop').disabled = true;
+  markActiveCamera();
 }
 
 /*

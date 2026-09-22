@@ -245,3 +245,10 @@ v editoru plánu.
   soubor.
 - Nahrávky se řadí do seznamu, každá se svým uložením a sdílením. Drží se
   jen v paměti stránky, takže je po zavření ztratíte - stránka to říká.
+
+## v12 - běžící kamera je vidět v seznamu
+
+Karta kamery, ze které právě běží obraz, je orámovaná zeleně a nese odznak
+*živě*. Rámeček je `outline`, protože řádky v seznamu vlastní okraj nemají -
+takto je vidět v seznamu i v dlaždicích. Označení se přesune při přepnutí
+kamery a zmizí s ukončením streamu.
