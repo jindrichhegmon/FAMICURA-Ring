@@ -301,3 +301,13 @@ volba přežije obnovení stránky.
 
 **Funguje v Chrome a Edge na počítači. Safari to neumí, na Macu ani na iPhonu** -
 tam karta nahrávek zůstane u stahování a řekne to.
+
+### Založení tabulek
+
+Firewall CLB1 pouští VPS, ne nutně váš počítač. Tabulky proto zakládejte z VPS:
+
+    ssh -i ~/.ssh/id_ed25519_jhnapps root@95.216.201.2 \
+      "su - jhnapps -c 'cd /opt/famicura-ring && node scripts/init-db.mjs'"
+
+Skript čte `sql/clb1.sql`, rozdělí ho na dávky podle `GO` a použije stejné
+`.env` jako server. Lze ho pustit opakovaně.
