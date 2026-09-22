@@ -196,3 +196,15 @@ nemůže ukončit žádný kód.
 Poznámka: v Chromiu se původní chyba nereprodukovala - při stažení souboru
 nepřišla žádná lifecycle událost a stream přežil. Příčina je tedy specifická
 pro Safari a opravy míří na mechanismy, které ji tam mohou způsobit.
+
+## v9 - čistší výběr kamery
+
+- Název kamery je větší, tučný a v plné barvě. `#devices` si drží třídu
+  `.muted` kvůli zástupnému textu, takže název si barvu určuje sám, jinak by
+  ji zdědil šedou.
+- Technický řádek s `ava1.ring.device.…` a typem zařízení je pryč. Celé ID
+  zůstává v `title` karty a ve sloupci exportu logu.
+- **Offline** zůstává jako odznak - rozhoduje o tom, jestli z kamery něco
+  poteče.
+- Místo textu *Živý obraz* je zelené tlačítko s ikonou kamery. Stav nese
+  `aria-label` („Živý obraz – název kamery") a `title`.
