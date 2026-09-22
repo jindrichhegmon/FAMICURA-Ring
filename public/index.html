@@ -107,7 +107,9 @@
   .seg button[aria-pressed="true"]{background:#106fd5;color:#fff;font-weight:700}
 
   button.rec{background:#d92727}
-  button.go{background:#107a3d}
+  /* Pale blue cannot carry a white icon, so the icon goes dark and a soft
+     border keeps the button readable as a button on the white card. */
+  button.go{background:#d6e9fa;color:#0d4a75;border:1px solid #a9cdee}
   button.danger{background:#c62828}
   button.icon{padding:0;width:44px;min-width:44px;display:inline-flex;align-items:center;justify-content:center}
   button.icon svg{width:22px;height:22px}

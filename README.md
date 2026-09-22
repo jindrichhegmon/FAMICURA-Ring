@@ -206,5 +206,7 @@ pro Safari a opravy míří na mechanismy, které ji tam mohou způsobit.
   zůstává v `title` karty a ve sloupci exportu logu.
 - **Offline** zůstává jako odznak - rozhoduje o tom, jestli z kamery něco
   poteče.
-- Místo textu *Živý obraz* je zelené tlačítko s ikonou kamery. Stav nese
+- Místo textu *Živý obraz* je tlačítko s ikonou kamery v bledě modré. Bledé
+  pozadí neunese bílou ikonu, takže ikona je tmavě modrá (kontrast 7,5:1)
+  a jemný okraj drží tvar tlačítka proti bílé kartě. Popisek nese
   `aria-label` („Živý obraz – název kamery") a `title`.
