@@ -342,6 +342,27 @@ Pořadí nápravy: opravit port v Caddy a `reload`, pak `.env`, pak
 `./deploy/vps-deploy.sh`, pak `scripts/init-db.mjs`, nakonec přebuildit
 Netlify kvůli pravidlu `/api/clb-health`.
 
+### Proč nestačilo přepsat PORT v .env
+
+`server.mjs` dává přednost proměnným prostředí:
+
+    if (process.env[m[1]] === undefined) process.env[m[1]] = m[2]
+
+Když si tedy pm2 pamatoval `PORT=3101` z dřívějška, `.env` ho nepřebilo a
+proces padal dokola na `EADDRINUSE 127.0.0.1:3101` (ten port drží datec).
+`pm2 list` u toho klidně ukazuje `online` - restartuje se pořád dokola.
+
+Port proto určuje nasazení: `deploy/ecosystem.config.cjs` má
+`PORT: process.env.PORT || '3111'` a `vps-deploy.sh` ho předává přes
+`PORT=$PORT pm2 startOrRestart … --update-env`. Nasazení navíc ověří, že
+**na tom portu poslouchá náš pm2 proces**, ne někdo jiný.
+
+Kdyby v pm2 přesto zůstal starý záznam, smazat a nastartovat znovu:
+
+    ssh -i ~/.ssh/id_ed25519_jhnapps root@95.216.201.2 \
+      "su - jhnapps -c 'cd /opt/famicura-ring && pm2 delete famicura-ring; \
+       PORT=3111 pm2 start deploy/ecosystem.config.cjs && pm2 save'"
+
 ### Kontrola z terminálu
 
 Kdo odpovídá na naší adrese (čekáme `"aplikace":"famicura-ring"`):
