@@ -1,2 +1,75 @@
-import crypto from "node:crypto";import {out,verifyHook} from "./_ring.mjs";import {getStore} from "@netlify/blobs";
-export const handler=async e=>{if(e.httpMethod!=="POST")return out(405,{ok:false,error:"POST required"});const raw=e.body||"",sig=e.headers["x-signature"]||e.headers["X-Signature"]||"";if(!verifyHook(raw,sig))return out(401,{ok:false,error:"Invalid signature"});let j;try{j=JSON.parse(raw)}catch{return out(400,{ok:false,error:"Invalid JSON"})}const id=j?.meta?.request_id||crypto.randomUUID();await getStore("ring-events").setJSON(`event-${Date.now()}-${id}`,j);return out(200,{ok:true})};
+import crypto from "node:crypto";
+import {
+  verifyWebhook,
+  eventsStore
+} from "./_ring.mjs";
+
+export default async (req) => {
+  if (req.method !== "POST") {
+    return new Response(JSON.stringify({
+      ok:false,
+      error:"POST required"
+    }), {
+      status:405,
+      headers:{ "content-type":"application/json" }
+    });
+  }
+
+  try {
+    const raw = await req.text();
+    const signature = req.headers.get("x-signature") || "";
+
+    if (!verifyWebhook(raw, signature)) {
+      return new Response(JSON.stringify({
+        ok:false,
+        error:"Invalid Ring webhook signature"
+      }), {
+        status:401,
+        headers:{ "content-type":"application/json" }
+      });
+    }
+
+    let payload;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return new Response(JSON.stringify({
+        ok:false,
+        error:"Invalid JSON"
+      }), {
+        status:400,
+        headers:{ "content-type":"application/json" }
+      });
+    }
+
+    const requestId =
+      payload?.meta?.request_id ||
+      crypto.randomUUID();
+
+    const store = eventsStore();
+
+    await store.setJSON(
+      `event-${Date.now()}-${requestId}`,
+      payload
+    );
+
+    return new Response(JSON.stringify({ ok:true }), {
+      status:200,
+      headers:{
+        "content-type":"application/json",
+        "cache-control":"no-store"
+      }
+    });
+
+  } catch (e) {
+    console.error("webhook", e);
+
+    return new Response(JSON.stringify({
+      ok:false,
+      error:e.message
+    }), {
+      status:500,
+      headers:{ "content-type":"application/json" }
+    });
+  }
+};
