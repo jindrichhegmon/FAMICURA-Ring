@@ -70,3 +70,50 @@ Přihlaste se na homepage a podívejte se do sekce Diagnostika a Log:
 - *Nevyzvednuté tokeny = 0* - Ring nezavolal Token Exchange URL, hledejte `exchange-*` v logu
 - *nonce neodpovídá* - ověřte `RING_HMAC_KEY` a `account_id_source` v záznamu `exchange-ok`
 - *webhook-rejected* - v záznamu je seznam hlaviček, které Ring skutečně poslal
+
+## v5 - zobrazení, nahrávání a živá analýza
+
+Funkce převzaté z prototypu Famicura Fall Analyzer a napojené na Ring stream
+místo na kameru telefonu. Veškeré zpracování běží v prohlížeči - obraz se
+nikam neodesílá.
+
+### Zobrazení
+
+Tři režimy nad živým obrazem:
+
+- **Normální** - obraz tak, jak ho posílá Ring. Zobrazuje se přímo `<video>`,
+  takže zůstává nativní ovládání a nejnižší zátěž procesoru.
+- **Rozmazaný** - snímek se zmenší na ~48 px na šířku, odbarví a zvětší zpět
+  bez vyhlazení. Detaily tím zaniknou, nejen změknou.
+- **Černé pozadí** - jen kostra postavy na černé ploše.
+
+Canvas se zapíná pouze když je potřeba (jiný než normální režim, nahrávání
+nebo analýza); jinak by zbytečně vytěžoval telefon.
+
+### Nahrávání
+
+Start/stop nad `canvas.captureStream(30)` a `MediaRecorder`. Nahrává se to, co
+je vidět - včetně anonymizace a kostry. Po zastavení se nabídne uložení a
+sdílení (Web Share API, jinak stažení). Preferuje se `video/mp4`, jinak WebM.
+
+### Živá analýza
+
+Start/stop. Po spuštění se stáhne MediaPipe PoseLandmarker a do logu se
+průběžně píše, co se v obraze děje - ne až na konci záznamu.
+
+Log hlásí:
+
+- změnu polohy (stojí / sedí / leží / mění polohu), pokud trvá aspoň 1 s
+- **možný pád** s mírou podezření a důvody (rychlý pohyb kyčlí dolů, prudká
+  změna orientace trupu, předchozí vzpřímená poloha, následné ležení)
+- **dlouhé ležení** nad 6 s
+- **ztrátu detekce postavy** nad 2 s a její návrat
+- **prudkou změnu polohy těla**
+
+Detekční pravidla a prahy jsou převzaté z prototypu beze změny, jen přepsané
+ze zpětné analýzy na průběžný stavový automat (`public/analyzer.js`).
+
+**Omezení:** analýza vychází z 2D polohy kloubů. Hluboce předkloněná postava,
+která má nohy na zemi, může vyjít jako ležící - těžiště ohraničujícího
+obdélníku klesne pod práh. Výstup slouží k rychlé kontrole záznamu, ne jako
+zdravotnické vyhodnocení.

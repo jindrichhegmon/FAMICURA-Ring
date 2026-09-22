@@ -9,6 +9,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Famicura Ring">
 <meta name="format-detection" content="telephone=no">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='11' fill='none' stroke='%23106fd5' stroke-width='5'/%3E%3C/svg%3E">
 <title>Famicura Ring</title>
 <style>
   :root{
@@ -56,7 +57,6 @@
   }
   code{word-break:break-all;font-size:.85em}
 
-  video{width:100%;background:#000;border-radius:12px;aspect-ratio:16/9;display:block}
 
   .ok{color:#16723b;font-weight:700}
   .bad{color:#9a5710;font-weight:700}
@@ -77,6 +77,25 @@
   .dev:last-child{border-bottom:0}
   .dev .meta{flex:1 1 200px;min-width:0;overflow-wrap:anywhere}
   .hide{display:none}
+
+  .stage{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:12px;overflow:hidden}
+  .stage > video, .stage > canvas{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+  #small{display:none}
+
+  .seg{display:flex;gap:0;border:1px solid #bcc8d1;border-radius:12px;overflow:hidden;width:100%}
+  .seg button{flex:1;border-radius:0;background:#fff;color:#17212b;font-weight:600;
+              font-size:.85rem;padding:12px 4px;border-left:1px solid #dde4ea}
+  .seg button:first-child{border-left:0}
+  .seg button[aria-pressed="true"]{background:#106fd5;color:#fff;font-weight:700}
+
+  button.rec{background:#d92727}
+  #saveLink{display:inline-block;background:#106fd5;color:#fff;font-weight:700;
+            border-radius:12px;padding:12px 18px;min-height:44px;text-decoration:none;line-height:20px}
+  #log{margin:0;list-style:none;padding:0;max-height:50vh;overflow:auto;-webkit-overflow-scrolling:touch}
+  #log li{padding:9px 0;border-bottom:1px solid #eef2f6;font-size:.92rem;display:flex;gap:10px}
+  #log li:last-child{border-bottom:0}
+  #log .ts{color:#5a6b7d;font-variant-numeric:tabular-nums;flex:0 0 auto}
+  #log li.warn .msg{color:#9a5710;font-weight:700}
 
   @media (max-width:640px){
     .kv > span:last-child{text-align:left;flex-basis:100%}
@@ -109,12 +128,42 @@
 
     <div class="c hide" id="streamCard">
       <h2>Živý obraz <span id="streamName" class="muted"></span></h2>
-      <video id="video" playsinline muted autoplay controls></video>
+
+      <div class="stage">
+        <video id="video" playsinline muted autoplay controls></video>
+        <canvas id="canvas" class="hide"></canvas>
+        <canvas id="small"></canvas>
+      </div>
+
+      <p class="muted" style="margin:14px 0 6px">Zobrazení</p>
+      <div class="seg" id="modes">
+        <button data-mode="normal" aria-pressed="true">Normální</button>
+        <button data-mode="blur" aria-pressed="false">Rozmazaný</button>
+        <button data-mode="black" aria-pressed="false">Černé pozadí</button>
+      </div>
+
       <div class="row" style="margin-top:12px">
+        <button id="record" class="rec">● Nahrávat</button>
+        <button id="analyze">Spustit analýzu</button>
         <button id="sound" class="sec hide">Zapnout zvuk</button>
         <button id="stop" class="sec" disabled>Ukončit</button>
       </div>
+
+      <div class="row hide" id="recBar" style="margin-top:10px">
+        <span class="muted">Nahrávám <span id="timer">00:00</span></span>
+      </div>
+      <div class="row hide" id="saveBar" style="margin-top:10px">
+        <a id="saveLink" download>Uložit video</a>
+        <button id="shareBtn" class="sec">Sdílet</button>
+      </div>
+
       <p id="streamMsg" class="muted" style="margin:10px 0 0"></p>
+    </div>
+
+    <div class="c hide" id="logCard">
+      <h2>Log analýzy</h2>
+      <ul id="log"></ul>
+      <p id="logEmpty" class="muted">Zatím se nic nestalo.</p>
     </div>
 
     <div class="c">
@@ -130,7 +179,9 @@
   </div>
 </div>
 
-<script>
+<script type="module">
+import { LiveAnalyzer, fmtTime, drawBackground, drawSkeleton, createLogEntry } from '/analyzer.js';
+
 const $ = (id) => document.getElementById(id);
 const ICE = [{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}];
 
@@ -317,6 +368,7 @@ async function startStream(deviceId, name) {
     await pc.setRemoteDescription({ type: 'answer', sdp: body.sdpAnswer });
 
     $('stop').disabled = false;
+    updateRender();
   } catch (e) {
     $('streamMsg').innerHTML = `<span class="bad">${esc(e.message)}</span>`;
     await stopStream();
@@ -338,6 +390,7 @@ async function stopStream() {
   const v = $('video');
   v.srcObject = null;
   v.muted = true;
+  updateRender();
   $('sound').textContent = 'Zapnout zvuk';
   $('sound').classList.add('hide');
   $('stop').disabled = true;
@@ -350,7 +403,232 @@ $('sound').onclick = () => {
   $('sound').textContent = v.muted ? 'Zapnout zvuk' : 'Ztlumit';
 };
 
-$('stop').onclick = async () => { await stopStream(); $('streamMsg').textContent = 'Stream ukončen.'; };
+$('stop').onclick = async () => {
+  stopAnalysis();
+  if (recording) stopRecording();
+  await stopStream();
+  $('streamMsg').textContent = 'Stream ukončen.';
+};
+
+/* ---------- display mode ---------- */
+
+const canvas = $('canvas');
+const cctx = canvas.getContext('2d');
+const small = $('small');
+const sctx = small.getContext('2d');
+
+let displayMode = 'normal';
+let rafId = null;
+
+$('modes').querySelectorAll('button').forEach((b) => {
+  b.onclick = () => {
+    displayMode = b.dataset.mode;
+    $('modes').querySelectorAll('button').forEach((o) =>
+      o.setAttribute('aria-pressed', String(o === b)));
+    updateRender();
+  };
+});
+
+// The canvas pipeline costs CPU, so it only runs when the picture is actually
+// being altered, recorded or analysed; otherwise the raw video is cheaper and
+// keeps the native iOS controls.
+function needsCanvas() {
+  return displayMode !== 'normal' || analyzing || recording;
+}
+
+function updateRender() {
+  const on = needsCanvas() && $('video').srcObject;
+  canvas.classList.toggle('hide', !on);
+  $('video').classList.toggle('hide', !!on);
+  if (on && rafId === null) rafId = requestAnimationFrame(renderLoop);
+  if (!on && rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+}
+
+function fitCanvas() {
+  const v = $('video');
+  const w = v.videoWidth || 1280, h = v.videoHeight || 720;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+    // ~48px wide before upscaling, so the mosaic removes detail rather than softening it.
+    small.width = 48;
+    small.height = Math.max(24, Math.round(48 * h / w));
+  }
+}
+
+let lastFrameTime = -1;
+
+function renderLoop() {
+  rafId = null;
+  const v = $('video');
+  if (!v.srcObject || !needsCanvas()) { updateRender(); return; }
+
+  fitCanvas();
+  if (v.readyState >= 2 && v.currentTime !== lastFrameTime) {
+    lastFrameTime = v.currentTime;
+    drawBackground(cctx, canvas, v, displayMode, small, sctx);
+    if (analyzing) detectPose(v);
+  }
+  rafId = requestAnimationFrame(renderLoop);
+}
+
+/* ---------- recording ---------- */
+
+let recorder = null, recording = false, chunks = [], recordedURL = null, recStartedAt = 0, timerId = null;
+
+function pickMime() {
+  const choices = [
+    ['video/mp4;codecs=avc1.42E01E', 'mp4'], ['video/mp4', 'mp4'],
+    ['video/webm;codecs=vp9', 'webm'], ['video/webm;codecs=vp8', 'webm'], ['video/webm', 'webm']
+  ];
+  for (const [mime, ext] of choices) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(mime)) return { mime, ext };
+  }
+  return { mime: '', ext: 'webm' };
+}
+
+let recordExt = 'mp4';
+
+function startRecording() {
+  if (!canvas.captureStream || !window.MediaRecorder) {
+    $('streamMsg').innerHTML = '<span class="bad">Tento prohlížeč neumí nahrávat canvas.</span>';
+    return;
+  }
+  if (recordedURL) { URL.revokeObjectURL(recordedURL); recordedURL = null; }
+  chunks = [];
+  $('saveBar').classList.add('hide');
+
+  // captureStream only produces frames from a canvas that is visible and being
+  // drawn, so switch the pipeline on before grabbing the stream.
+  recording = true;
+  updateRender();
+  fitCanvas();
+
+  const fmt = pickMime();
+  recordExt = fmt.ext;
+  const stream = canvas.captureStream(30);
+  recorder = fmt.mime
+    ? new MediaRecorder(stream, { mimeType: fmt.mime, videoBitsPerSecond: 3500000 })
+    : new MediaRecorder(stream);
+
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: recorder.mimeType || fmt.mime || 'video/mp4' });
+    recordedURL = URL.createObjectURL(blob);
+    recordedBlob = blob;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    $('saveLink').href = recordedURL;
+    $('saveLink').download = `famicura-ring-${stamp}.${recordExt}`;
+    $('saveBar').classList.remove('hide');
+    $('streamMsg').textContent = `Nahrávka hotova (${(blob.size / 1024 / 1024).toFixed(1)} MB).`;
+    recorder = null;
+    recording = false;
+    updateRender();
+  };
+
+  recStartedAt = Date.now();
+  recorder.start(1000);
+  tickTimer();
+  timerId = setInterval(tickTimer, 250);
+
+  $('record').textContent = '■ Zastavit nahrávání';
+  $('recBar').classList.remove('hide');
+  updateRender();
+}
+
+function tickTimer() {
+  $('timer').textContent = fmtTime((Date.now() - recStartedAt) / 1000);
+}
+
+function stopRecording() {
+  if (recorder && recorder.state !== 'inactive') recorder.stop();
+  else { recording = false; updateRender(); }
+  clearInterval(timerId);
+  $('record').textContent = '● Nahrávat';
+  $('recBar').classList.add('hide');
+}
+
+$('record').onclick = () => (recording ? stopRecording() : startRecording());
+
+let recordedBlob = null;
+
+$('shareBtn').onclick = async () => {
+  if (!recordedBlob) return;
+  const file = new File([recordedBlob], $('saveLink').download, { type: recordedBlob.type });
+  try {
+    if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file], title: 'Famicura Ring' });
+    else $('saveLink').click();
+  } catch (e) { if (e.name !== 'AbortError') $('saveLink').click(); }
+};
+
+/* ---------- live analysis ---------- */
+
+let analyzing = false, landmarker = null, poseConnections = [], analysisStartedAt = 0;
+const analyzer = new LiveAnalyzer(appendLog);
+
+function appendLog(ev) {
+  $('logEmpty').classList.add('hide');
+  $('log').prepend(createLogEntry(document, ev)); // newest first: no scrolling on a phone
+  while ($('log').children.length > 200) $('log').lastElementChild.remove();
+}
+
+async function loadModel() {
+  if (landmarker) return;
+  $('streamMsg').textContent = 'Načítám model pro analýzu…';
+  const { PoseLandmarker, FilesetResolver } =
+    await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest');
+  const vision = await FilesetResolver.forVisionTasks(
+    'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm');
+  landmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: 'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task',
+      delegate: 'GPU'
+    },
+    runningMode: 'VIDEO', numPoses: 1,
+    minPoseDetectionConfidence: .55, minPosePresenceConfidence: .55, minTrackingConfidence: .55
+  });
+  poseConnections = PoseLandmarker.POSE_CONNECTIONS;
+}
+
+function detectPose(video) {
+  if (!landmarker) return;
+  let result;
+  try { result = landmarker.detectForVideo(video, performance.now()); }
+  catch { return; }
+
+  const t = (Date.now() - analysisStartedAt) / 1000;
+  const lm = result.landmarks?.[0] || null;
+  if (lm) drawSkeleton(cctx, canvas, lm, poseConnections);
+  analyzer.push(t, lm);
+}
+
+async function startAnalysis() {
+  $('analyze').disabled = true;
+  try {
+    await loadModel();
+  } catch (e) {
+    $('streamMsg').innerHTML = `<span class="bad">Model se nepodařilo načíst: ${esc(e.message)}</span>`;
+    $('analyze').disabled = false;
+    return;
+  }
+  analyzer.reset();
+  analysisStartedAt = Date.now();
+  analyzing = true;
+  $('analyze').textContent = 'Zastavit analýzu';
+  $('analyze').disabled = false;
+  $('logCard').classList.remove('hide');
+  $('streamMsg').textContent = 'Analýza běží.';
+  updateRender();
+}
+
+function stopAnalysis() {
+  if (!analyzing) return;
+  analyzing = false;
+  $('analyze').textContent = 'Spustit analýzu';
+  $('streamMsg').textContent = 'Analýza zastavena.';
+  updateRender();
+}
+
+$('analyze').onclick = () => (analyzing ? stopAnalysis() : startAnalysis());
 
 // iOS fires pagehide, not unload, when Safari suspends the tab.
 window.addEventListener('pagehide', () => { stopStream(); });
